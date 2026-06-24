@@ -1,0 +1,1 @@
+# Relația Bethe–Bloch pentru generarea curbelor Bragg
