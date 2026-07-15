@@ -5,11 +5,18 @@ import plotly.graph_objects as go
 K = 0.307075              # MeV cm^2 / mol
 me_c2 = 0.510998918       # Electron mass * c^2 (MeV)
 
-# # Absorber (Gas) Parameters  (Argon)
-Z_gas = 18
-A_gas = 39.948           # g/mol 
-I_gas = 188.0 * 1e-6     # Mean excitation energy (MeV)
-rho_gas = 0.00178        # Density (g/cm^3)   
+# # Absorber (Gas) Parameters (Argon)
+# Z_gas = 18
+# A_gas = 39.948           # g/mol 
+# I_gas = 188.0 * 1e-6     # Mean excitation energy (MeV)
+# rho_gas = 0.00178        # Density (g/cm^3) 
+
+
+# Absorber (Gas) Parameters (Si3N4)
+Z_gas = 70
+A_gas = 140.283           # g/mol 
+I_gas = 127.795 * 1e-6     # Mean excitation energy (MeV)
+rho_gas = 3.44        # Density (g/cm^3)  
 
 # Absorber (Gas) Parameters (C4H10)
 # Z_gas = 34
@@ -21,56 +28,48 @@ rho_gas = 0.00178        # Density (g/cm^3)
 # Beryllium
 z_p1 = 4                   # Charge
 M_p1 = 9314                # Mass (MeV/c^2)
-E01 = 1.8                  # Initial kinetic energy (MeV)
+E01 = 5.0                  # Initial kinetic energy (MeV)
 
 # Boron
 z_p2 = 5                   # Charge 
 M_p2 = 9314                # Mass (MeV/c^2)
-E02 = 1.6                  # Initial kinetic energy (MeV)
+E02 = 6.0                  # Initial kinetic energy (MeV)
 
 # Settings
 x_start = 0
-x_stop = 1000               # mm
+x_stop = 10000               # mm
 delta_x = 0.01              # mm
 
-def bethe_bloch_simulation(Z_gas, A_gas, I_gas, rho_gas, z, M, E0_k, name):
+def bethe_bloch_simulation(Z_target, A_target, I_target, rho_target, z_part, M_part, E0_k, name):
     x_vals = [x_start]
     E_vals = [E0_k]
     dEdx_vals = []
-    
+
     current_x = x_start
     current_E = E0_k
-    
-    while current_x < x_stop and current_E > 0.1: 
-        
-        # Relativistic kinematics (dimentionless)
-        gamma = (current_E / M) + 1.0
+
+    while current_x < x_stop and current_E > 0.01:
+        gamma = (current_E / M_part) + 1.0
         beta_sq = 1.0 - (1.0 / gamma**2)
         beta = np.sqrt(beta_sq)
-        
-        # z_eff = z * (1.0 - np.exp(-125.0 * beta * (z ** (-2/3))))
-        
-        # T_max (MeV)
-        ratio = me_c2 / M
+
+        # Effective charge (Barkas formula)
+        z_eff = z_part * (1.0 - np.exp(-125.0 * beta * z_part**(-2.0/3.0)))
+
+        ratio = me_c2 / M_part
         T_max = (2.0 * me_c2 * beta_sq * gamma**2) / (1.0 + 2.0 * gamma * ratio + ratio**2)
-        
-        # Logarithm argument (dimentionless)
-        log_arg = (2.0 * me_c2 * beta_sq * gamma**2 * T_max) / (I_gas**2)
-        # log_arg = (2.0 * me_c2 * beta_sq) / (I_gas * (1 - beta_sq))
-        
-        # Bethe-Bloch Mass Stopping Power (MeV g-1 cm^2) 
-        mass_stopping = K * (z**2) * (Z_gas / A_gas) * (1.0 / beta_sq) * (0.5 * np.log(log_arg) - beta_sq)
-        # mass_stopping = K * (z**2) * (Z_gas / A_gas) * (1.0 / beta_sq) * (np.log(log_arg) - beta_sq)
-        
-        # Linear Stopping Power (MeV / cm)
-        linear_stopping = mass_stopping * rho_gas
-        
-        # Convert to MeV / mm
-        dEdx_mm = linear_stopping / 100
-        
+
+        log_arg = (2.0 * me_c2 * beta_sq * gamma**2 * T_max) / (I_target**2)
+        log_arg = max(log_arg, 1.0001)
+
+        mass_stopping = K * (z_eff**2) * (Z_target / A_target) * (1.0 / beta_sq) * (0.5 * np.log(log_arg) - beta_sq)
+        mass_stopping = max(mass_stopping, 0.0) 
+
+        linear_stopping = mass_stopping * rho_target
+        dEdx_mm = linear_stopping / 10.0
+
         dEdx_vals.append(dEdx_mm)
-        
-        # Subtract energy loss
+
         current_E -= dEdx_mm * delta_x
         current_x += delta_x
 
@@ -79,16 +78,16 @@ def bethe_bloch_simulation(Z_gas, A_gas, I_gas, rho_gas, z, M, E0_k, name):
             x_vals.append(current_x)
             E_vals.append(current_E)
             break
-            
+
         x_vals.append(current_x)
         E_vals.append(current_E)
-        
+
     if len(dEdx_vals) < len(x_vals):
         dEdx_vals.append(np.nan)
 
-    df = pd.DataFrame({
-        'x': x_vals, 
-        f'E_{name}': E_vals, 
+    return pd.DataFrame({
+        'x': x_vals,
+        f'E_{name}': E_vals,
         f'dE/dx_{name}': dEdx_vals
     })
     
