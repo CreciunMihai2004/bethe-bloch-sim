@@ -1,5 +1,5 @@
 """
-Stopping-power output units
+Stopping-power output units and plot mode
 """
 
 from enum import Enum
@@ -14,6 +14,13 @@ class StoppingUnit(Enum):
     def label(self) -> str:
         return self.value
 
+class PlotMode(Enum):
+    DEDX   = "Stopping power (dE/dx)"
+    ENERGY = "Kinetic energy (MeV)"
+
+    @property
+    def label(self) -> str:
+        return self.value
 
 def convert_from_mass(mass_stopping: float, unit: StoppingUnit, rho: float) -> float:
     
