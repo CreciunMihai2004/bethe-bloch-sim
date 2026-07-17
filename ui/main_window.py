@@ -3,7 +3,7 @@
 from copy import deepcopy
 from typing import List
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSettings
 from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -134,7 +134,8 @@ class MainWindow(QMainWindow):
         disp_form.addRow("x-axis:", self.xaxis_combo)
 
         # ---- action buttons ----
-        self.btn_theme = QPushButton("☀  Light mode")
+        self.btn_theme = QPushButton("☀ Light mode")
+        self.btn_load_session = QPushButton("🗀 Load Last Session")
         self.btn_export_csv = QPushButton("Export CSV")
         self.btn_export_xlsx = QPushButton("Export Excel")
         self.btn_export_png = QPushButton("Export PNG")
@@ -155,6 +156,7 @@ class MainWindow(QMainWindow):
         control.addWidget(self.p2_panel)
         control.addWidget(disp_box)
         control.addWidget(self.btn_theme)
+        control.addWidget(self.btn_load_session)
         control.addLayout(btn_row)
         control.addStretch(1)
 
@@ -196,6 +198,7 @@ class MainWindow(QMainWindow):
         self.xaxis_combo.currentIndexChanged.connect(self.on_display_changed)
 
         self.btn_theme.clicked.connect(self._toggle_theme)
+        self.btn_load_session.clicked.connect(self._load_settings)
         self.btn_export_csv.clicked.connect(self._on_export_csv)
         self.btn_export_xlsx.clicked.connect(self._on_export_xlsx)
         self.btn_export_png.clicked.connect(self._on_export_png)
@@ -234,7 +237,7 @@ class MainWindow(QMainWindow):
         if new_theme == "dark":
             self.btn_theme.setText("☀  Light mode")
         else:
-            self.btn_theme.setText("🌙  Dark mode")
+            self.btn_theme.setText("☽  Dark mode")
 
     # ---- simulation scheduling ----
 
@@ -344,12 +347,109 @@ class MainWindow(QMainWindow):
         mode = self._current_plot_mode()
         lines = []
         for r in self._results:
+            if mode is PlotMode.DEDX:
+                extra = f"peak dE/dx = {r.peak_dEdx(unit):.4f} {unit.label}"
+            else:
+                extra = f"E₀ = {r.E[0]:.3f} MeV"
             lines.append(
                 f"<b>{r.name}</b>: range = {r.range_mm:.4f} mm "
-                f"({r.range_mass:.5f} g/cm²), "
-                f"peak dE/dx = {r.peak_dEdx(unit):.4f} {unit.label}"
+                f"({r.range_mass:.5f} g/cm²), {extra}"
             )
         self.results_label.setText("<br>".join(lines))
+        
+        
+    # ---- session save + load ----
+    #   Windows : HKCU\Software\BraggSim\BraggCurveSimulator
+    #   macOS   : ~/Library/Preferences/com.BraggSim.BraggCurveSimulator.plist
+    #   Linux   : ~/.config/BraggSim/BraggCurveSimulator.ini
+    
+    _SETTINGS_ORG = "BraggSim"
+    _SETTINGS_APP = "BraggCurveSimulator"
+    
+    def _save_settings(self):
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
+        
+        # material
+        s.setValue("material/name",  self.mat_combo.currentText())
+        s.setValue("material/density",  self.density_input.value())
+        
+        # particles
+        for i, panel in enumerate([self.p1_panel, self.p2_panel], 1):
+            g = f"particle{i}"
+            s.setValue(f"{g}/preset", panel.combo.currentText())
+            s.setValue(f"{g}/z", panel.spin_z.value())
+            s.setValue(f"{g}/M_u", panel.spin_M_u.value())
+            s.setValue(f"{g}/E0", panel.input_E0.value())
+            
+        # display
+        s.setValue("display/unit", self.unit_combo.currentIndex())
+        s.setValue("display/xaxis", self.xaxis_combo.currentIndex())
+        s.setValue("display/mode", self.plot_mode_combo.currentIndex())
+        
+    def _load_settings(self):
+        s = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
+            
+        # material
+        mat_name = s.value("material/name")
+        if mat_name and mat_name in MATERIAL_DB:
+            self.mat_combo.blockSignals(True)
+            self.mat_combo.setCurrentText(mat_name)
+            self.mat_combo.blockSignals(False)
+            
+        density = s.value("material/density", type=float)
+        if density and density > 0:
+            self.density_input.blockSignals(True)
+            self.density_input.setValue(density)
+            self.density_input.blockSignals(False)
+            
+        # particles
+        for i, panel in enumerate([self.p1_panel, self.p2_panel], 1):
+            g = f"particle{i}"
+            
+            panel.blockSignals(True)
+            try:
+                preset = s.value(f"{g}/preset")
+                panel.combo.blockSignals(True)
+                panel.combo.setCurrentText(preset)
+                panel.combo.blockSignals(False)
+                
+                panel._load_preset(preset)
+
+                z = s.value(f"{g}/z", type=int)
+                if z:
+                    panel.spin_z.setValue(z)
+                    
+                M_u = s.value(f"{g}/M_u", type=float)
+                if M_u and M_u > 0:
+                    panel.spin_M_u.setValue(M_u)
+                    
+                E0 = s.value(f"{g}/E0", type=float)
+                if E0 and E0 > 0:
+                    panel.input_E0.setValue(E0)
+                    
+            finally:
+                panel.blockSignals(False)
+                
+        # display 
+        for combo, key in [
+            (self.unit_combo, "display/unit"),
+            (self.xaxis_combo, "display/xaxis"),
+            (self.plot_mode_combo, "display/mode")
+        ]:
+            idx = s.value(key, type=int)
+            if idx is not None and 0 <= idx < combo.count():
+                combo.blockSignals(True)
+                combo.setCurrentIndex(idx)
+                combo.blockSignals(False)
+            
+        # sync
+        self._sync_controls()
+        self.schedule_auto_run()
+        
+    def closeEvent(self, event):
+        self._save_settings()
+        super().closeEvent(event) 
+                
 
     # ---- export ----
 

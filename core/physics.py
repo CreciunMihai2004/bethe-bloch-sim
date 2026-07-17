@@ -75,15 +75,12 @@ def dEdx_mass(mat: Material, part: Particle, E_kin: float) -> float:
     if log_arg <= 1.0:
         return 0.0
 
-    """eta = beta * gamma
-    C_over_Z = shell_correction(eta, mat) / mat.Z"""
+    eta = beta * gamma
+    C_over_Z = shell_correction(eta, mat) / mat.Z
     delta = density_effect(beta, gamma, mat)
 
-    """mass_stopping = K * (z_eff ** 2) * (mat.Z / mat.A) * (1.0 / beta_sq) * (
-        0.5 * np.log(log_arg) - beta_sq - delta / 2.0 - C_over_Z
-    )"""
-    
     mass_stopping = K * (z_eff ** 2) * (mat.Z / mat.A) * (1.0 / beta_sq) * (
-        0.5 * np.log(log_arg) - beta_sq - delta / 2.0
+        0.5 * np.log(log_arg) - beta_sq - delta / 2.0 - C_over_Z
     )
+
     return max(mass_stopping, 0.0)   # MeV cm^2 / g

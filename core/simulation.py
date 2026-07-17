@@ -68,7 +68,7 @@ class TrackResult:
 # ---- cutoff helper ----
 
 def _trim_after_peak(x_vals: list, E_vals: list, dEdx_vals: list,
-                     threshold_frac: float = 0.034): # 0.0034 ~ 0.0033
+                     threshold_frac: float = 0.0033): # 0.0034 ~ 0.0033
 
     arr = np.array(dEdx_vals, dtype=float)
     finite = arr[np.isfinite(arr)]
