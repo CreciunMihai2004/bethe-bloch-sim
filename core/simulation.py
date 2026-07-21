@@ -68,7 +68,7 @@ class TrackResult:
 # ---- cutoff helper ----
 
 def _trim_after_peak(x_vals: list, E_vals: list, dEdx_vals: list,
-                     threshold_frac: float = 0.0033): # 0.0034 ~ 0.0033
+                     threshold_frac: float = 0.015): # 0.0034 ~ 0.0033
 
     arr = np.array(dEdx_vals, dtype=float)
     finite = arr[np.isfinite(arr)]
@@ -225,12 +225,6 @@ def export_xlsx(results: List[TrackResult], path: str,
                 unit: StoppingUnit, mass_thickness: bool = False) -> None:
     """Same table as export_csv, written as .xlsx via pandas/openpyxl."""
     _build_export_df(results, unit, mass_thickness).to_excel(path, index=False)
-
-
-
-
-
-
 
 def export_xlsx(results: List[TrackResult], path: str,
                 unit: StoppingUnit, mass_thickness: bool = False) -> None:

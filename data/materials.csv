@@ -1,0 +1,26 @@
+# Detector gas / material database
+#
+# Columns
+# -------
+# name      Display name shown in the UI (must be unique)
+# Z         Effective atomic number
+# A         Molar mass               (g/mol)
+# I_eV      Mean excitation energy   (eV)   — NIST / ICRU 49 values
+# rho       Density at STP           (g/cm^3)
+# X0        Sternheimer X0 parameter (optional — default 1.6)
+# X1        Sternheimer X1 parameter (optional — default 4.0)
+# a_stern   Sternheimer a  parameter (optional — default 0.10)
+# m_stern   Sternheimer m  parameter (optional — default 3.0)
+#
+# Lines beginning with # are ignored.
+# Whitespace around values is stripped.
+# Sternheimer columns may be left blank to use the defaults above.
+#
+name,Z,A,I_eV,rho,X0,X1,a_stern,m_stern
+#
+Helium (He),2,4.003,41.8,0.0001664,2.2,3.6,0.13,5.8
+Argon (Ar),18,39.948,188.0,0.001662,1.7,4.2,0.19,3.0
+Methane (CH4),10,16.043,41.7,0.0006672,1.6,3.8,0.16,3.5
+Isobutane (C4H10),34,58.124,48.3,0.00241,1.6,4.0,0.10,3.0
+#
+Silicon (Si),14,28.086,173.0,2.329,0.2,2.87,0.149,3.255

@@ -23,9 +23,8 @@ class ParticlePanel(QGroupBox):
 
     valueChanged = Signal()
 
-    def __init__(self, title: str, default_name: str, default_color: str):
+    def __init__(self, title: str, default_name: str):
         super().__init__(title)
-        self._color = default_color
 
         self.combo = QComboBox()
         self.combo.addItems(PARTICLE_DB.keys())
@@ -111,8 +110,8 @@ class MainWindow(QMainWindow):
         mat_form.addRow("Density:", self.density_input)
 
         # ---- particles ----
-        self.p1_panel = ParticlePanel("Particle 1", "Alpha", "cyan")
-        self.p2_panel = ParticlePanel("Particle 2", "Proton", "orange")
+        self.p1_panel = ParticlePanel("Particle 1", "Hydrogen-1")
+        self.p2_panel = ParticlePanel("Particle 2", "Helium-4")
 
         # ---- display options ----
         self.plot_mode_combo = QComboBox()

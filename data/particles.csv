@@ -1,0 +1,20 @@
+# Projectile particle database 
+#
+# Columns
+# -------
+# name      Display name shown in the UI (must be unique)
+# z         Charge number (integer)
+# M_u       Rest mass in atomic mass units (u)
+# E0        Default initial kinetic energy (MeV) — leave blank for no default
+#
+# Lines beginning with # are ignored.
+# Whitespace around values is stripped.
+#
+name,z,M_u,E0,
+#
+Hydrogen-1,1,1.008,,
+Helium-4,2,4.003,,
+Lithium-7,3,7.016,,
+Beryllium-9,4,9.012182,,
+Boron-10,5,10.012937,,
+Carbon-12,6,11.996709,,
