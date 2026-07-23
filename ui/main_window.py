@@ -101,7 +101,7 @@ class MainWindow(QMainWindow):
         self.density_input.setRange(1e-8, 100.0)
         self.density_input.setDecimals(8)
         self.density_input.setSuffix(" g/cm³")
-        self.density_input.setSingleStep(0.00001)
+        self.density_input.setSingleStep(0.000001)
         self.density_input.setValue(get_material(self.mat_combo.currentText()).rho)
 
         mat_box = QGroupBox("Material")

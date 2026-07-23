@@ -79,7 +79,7 @@ class BraggPlot(pg.PlotWidget):
         self._theme_name = "light" if self._theme_name == "dark" else "dark"
         self._apply_theme()
         if self._results:
-            self.redraw(self._unit, self._mass_thickness)
+            self.redraw(self._unit, self._mass_thickness, mode=self._mode)
         return self._theme_name
 
     @property

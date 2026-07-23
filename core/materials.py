@@ -22,8 +22,7 @@ class Material:
     I_eV: float    # mean excitation energy (eV)
     rho: float     # g/cm^3
 
-    # Sternheimer density-effect parameters (sensible defaults for a low-
-    # density gas where the density effect is negligible anyway)
+    # Sternheimer density-effect parameters
     X0: float = 1.6
     X1: float = 4.0
     a_stern: float = 0.10
@@ -35,14 +34,16 @@ class Material:
 
     @property
     def plasma_energy_eV(self) -> float:
+        """Sternheimer plasma energy hbar*omega_p in eV"""
         return 28.816 * np.sqrt(self.rho * self.Z / self.A)
 
     @property
     def Cbar(self) -> float:
+        """Sternheimer C-bar constant for the density-effect correction"""
         return 2.0 * np.log(self.I_eV / self.plasma_energy_eV) + 1.0
 
 
-# ── CSV loader ────────────────────────────────────────────────────────────────
+# ---- CSV loader ----
 
 def _float(val: str, default: float) -> float:
     """Convert a CSV cell to float"""
@@ -53,8 +54,8 @@ def _float(val: str, default: float) -> float:
 def _load_material_db(path: Path = _MATERIALS_CSV) -> dict[str, Material]:
     """
     Parse path and return a {name: Material} dict
-    (Lines whose first non-whitespace character is ``#`` are treated as
-    comments and skipped.)
+    Lines whose first non-whitespace character is `#` are treated as
+    comments and skipped
     """
     if not path.exists():
         raise FileNotFoundError(

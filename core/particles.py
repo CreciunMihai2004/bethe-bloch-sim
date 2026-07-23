@@ -32,8 +32,6 @@ _PARTICLES_CSV = _DATA_DIR / "particles.csv"
 def _load_particle_db(path: Path = _PARTICLES_CSV) -> dict[str, Particle]:
     """
     Parse path and return a {name: Particle} dict
-    (Lines whose first non-whitespace character is ``#`` are treated as
-    comments and skipped)
     """
     if not path.exists():
         raise FileNotFoundError(

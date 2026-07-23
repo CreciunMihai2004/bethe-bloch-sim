@@ -5,7 +5,7 @@
 # name      Display name shown in the UI (must be unique)
 # Z         Effective atomic number
 # A         Molar mass               (g/mol)
-# I_eV      Mean excitation energy   (eV)   — NIST / ICRU 49 values
+# I_eV      Mean excitation energy   (eV) — NIST / ICRU 49 values
 # rho       Density at STP           (g/cm^3)
 # X0        Sternheimer X0 parameter (optional — default 1.6)
 # X1        Sternheimer X1 parameter (optional — default 4.0)
