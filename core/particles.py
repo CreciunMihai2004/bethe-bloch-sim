@@ -9,6 +9,7 @@ import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+import colorsys
 
 from .constants import U_TO_MEV
 
@@ -19,7 +20,7 @@ class Particle:
     z: int          # charge number
     M_u: float      # rest mass in atomic mass units (aum)
     E0: Optional[float] = None  # initial kinetic energy (MeV)
-    color: str = field(default_factory=lambda: f"#{random.randint(0, 0xFFFFFF):06x}")
+    color: str = field(default_factory=lambda: "#" + "".join(f"{int(c*255):02x}" for c in colorsys.hsv_to_rgb(random.random(), 1.0, 1.0)))
 
     @property
     def M(self) -> float:

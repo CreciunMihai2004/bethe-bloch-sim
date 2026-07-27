@@ -19,7 +19,7 @@ class SimSettings:
     x_start: float = 0.0        # mm
     x_stop: float = 1000.0      # mm
     E_cutoff: float = 0.001     # MeV
-    max_dx: float = 0.5         # mm
+    max_dx: float = 0.01         # mm
     frac_loss: float = 0.01     # max fractional energy loss per step
 
 
@@ -29,7 +29,7 @@ class TrackResult:
     Bragg curve result.  Arrays are already trimmed to the physical
     range — they end where dE/dx first drops below 1.5 % of the Bragg
     peak after the peak, which marks the boundary of Bethe-Bloch
-    validity (nuclear stopping takes over below that point).
+    validity (nuclear stopping takes over below that point)
 
     x_mass    : mass thickness (g/cm^2)
     E         : kinetic energy (MeV)
@@ -198,7 +198,7 @@ def find_intersections(a: TrackResult, b: TrackResult,
 
 def _build_export_df(results: List[TrackResult], unit: StoppingUnit,
                      mass_thickness: bool) -> pd.DataFrame:
-    """Shared table-building logic for CSV and Excel export."""
+    """Shared table-building logic for CSV and Excel export"""
     x_label = "x_g_per_cm2" if mass_thickness else "x_mm"
     df = None
     for r in results:
@@ -223,7 +223,6 @@ def export_csv(results: List[TrackResult], path: str,
 
 def export_xlsx(results: List[TrackResult], path: str,
                 unit: StoppingUnit, mass_thickness: bool = False) -> None:
-    """Same table as export_csv, written as .xlsx via pandas/openpyxl."""
     _build_export_df(results, unit, mass_thickness).to_excel(path, index=False)
 
 def export_xlsx(results: List[TrackResult], path: str,
@@ -232,10 +231,10 @@ def export_xlsx(results: List[TrackResult], path: str,
     Sheet "Bragg curves"
         One shared x-column, then alternating energy / dE/dx columns per
         particle — same structure as the CSV export so the two are
-        interchangeable.
+        interchangeable
 
     Sheet "Metadata"
-        Range, peak dE/dx, and unit information for each particle.
+        Range, peak dE/dx, and unit information for each particle
     """
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment

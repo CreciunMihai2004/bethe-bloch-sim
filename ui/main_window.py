@@ -324,7 +324,6 @@ class MainWindow(QMainWindow):
     # ---- display-only refresh ----
     
     def _sync_controls(self):
-        """Grey out controls that don't apply to the current plot mode"""
         self.unit_combo.setEnabled(
             self._current_plot_mode() is PlotMode.DEDX
         )

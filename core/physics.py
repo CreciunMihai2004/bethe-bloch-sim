@@ -63,19 +63,16 @@ def zbl_nuclear_stopping(E_kin: float, part: Particle, mat: Material) -> float:
     M2 = mat.A
     
     # Calculate reduced energy (epsilon)
-    denominator = Z1 * Z2 * (M1 + M2) * (Z1**0.23 + Z2**0.23)
-    epsilon = (32.53 * M2 * E_keV) / denominator
-    
-    # Calculate reduced nuclear stopping cross-section (s_n)
-    if epsilon < 30.0:
-        num = 0.5 * np.log(1.0 + 1.1383 * epsilon)
-        den = epsilon + 0.01321 * (epsilon**0.21226) + 0.19593 * (epsilon**0.5)
-        s_n = num / den
-    else:
-        s_n = np.log(epsilon) / (2.0 * epsilon)
+    denominator = Z1 * Z2 * (M1 + M2) * (Z1**0.67 + Z2**0.67)**0.5 
+    epsilon = (32.53 * M2 * E_keV) / denominator # https://arxiv.org/pdf/1602.03216 (7)
+        
+    # num = 0.5 * np.log(1.0 + 1.1383 * epsilon)
+    num = 0.5 * np.log(1.0 + epsilon)
+    den = epsilon + 0.01321 * (epsilon**0.21226) + 0.19593 * (epsilon**0.5) # https://arxiv.org/pdf/1602.03216 (before 7)
+    s_n = num / den
         
     # Convert to physical cross section S_n
-    S_n_eV_cm2 = (8.462 * Z1 * Z2 * M1 * s_n) / ((M1 + M2) * (Z1**0.23 + Z2**0.23))
+    S_n_eV_cm2 = (8.462 * Z1 * Z2 * M1 * s_n) / ((M1 + M2) * (Z1**0.23 + Z2**0.23)) # https://arxiv.org/pdf/1602.03216 (6)
     
     # Convert to Mass Stopping Power (MeV cm^2 / g)
     N_A = 6.022e23 # Avogadro's number
@@ -85,7 +82,7 @@ def zbl_nuclear_stopping(E_kin: float, part: Particle, mat: Material) -> float:
 
 def dEdx_mass(mat: Material, part: Particle, E_kin: float) -> float:
     """
-    TOTAL MASS stopping power in MeV cm^2 / g (Electronic + Nuclear)
+    TOTAL MASS stopping power (Electronic + Nuclear)
     """
     if E_kin <= 1e-6:
         return 0.0
@@ -105,9 +102,6 @@ def dEdx_mass(mat: Material, part: Particle, E_kin: float) -> float:
     mass_stopping_elec = 0.0
     z_eff = effective_charge(z_part, beta)
     
-    # Flags to check if Bethe-Bloch is valid
-    bb_valid = False
-    
     if z_eff > 0:
         ratio = ME_C2 / M_part
         T_max = (2.0 * ME_C2 * beta_sq * gamma ** 2) / (
@@ -119,7 +113,6 @@ def dEdx_mass(mat: Material, part: Particle, E_kin: float) -> float:
         
         # Using 1.05 as a buffer so it switches before hitting 0
         if log_arg > 1.05: 
-            bb_valid = True
             eta = beta * gamma
             C_over_Z = shell_correction(eta, mat) / mat.Z
             delta = density_effect(beta, gamma, mat)
@@ -128,12 +121,6 @@ def dEdx_mass(mat: Material, part: Particle, E_kin: float) -> float:
                 0.5 * np.log(log_arg) - beta_sq - delta / 2.0 - C_over_Z
             )
             mass_stopping_elec = max(bb_stopping, 0.0)
-
-    # Low Energy Fallback
-    # If Bethe-Bloch breaks down (log_arg <= 1.05), low-energy regime is forced
-    if not bb_valid:
-        k_drag = 0.5 * (part.z ** 0.5) * (mat.Z / mat.A)
-        mass_stopping_elec = k_drag * np.sqrt(E_kin * 1000.0) 
 
     # Total Stopping Power
     return mass_stopping_elec + mass_stopping_nuc
