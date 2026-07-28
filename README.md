@@ -4,13 +4,11 @@ BraggSim calculates continuous slowing down approximation ranges, stopping power
 
 ## Features
 *   **Interactive UI:** A clean Qt-based interface for fast parameter adjustments and real-time plotting.
-*   **Extensible Databases:** Add new materials and projectiles simply by editing external CSV files—no recompilation required.
+*   **Extensible Databases:** Add new materials and projectiles simply by editing CSV files.
 *   **Robust Physics Engine:** Smoothly transitions between high-energy and low-energy stopping power models.
 *   **Standalone Deployment:** Available as a single, portable Windows executable (`.exe`).
 
 ## 📂 Project Structure
-
-To ensure the application runs correctly—either from source or as a compiled executable—the `data/` directory must be kept alongside the script or `.exe`:
 
 ```text
 BraggSim/
