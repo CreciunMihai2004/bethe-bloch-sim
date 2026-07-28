@@ -7,10 +7,19 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 import numpy as np
 
-_DATA_DIR = Path(__file__).parent.parent / "data"
+def get_data_dir() -> Path:
+    if getattr(sys, 'frozen', False):
+        base_dir = Path(sys.executable).parent
+    else:
+        base_dir = Path(__file__).resolve().parent.parent
+        
+    return base_dir / "data"
+
+_DATA_DIR = get_data_dir()
 _MATERIALS_CSV = _DATA_DIR / "materials.csv"
 
 

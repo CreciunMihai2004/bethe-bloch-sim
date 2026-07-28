@@ -8,6 +8,7 @@ import csv
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
+import sys
 from typing import Optional
 import colorsys
 
@@ -27,7 +28,15 @@ class Particle:
         """Rest mass energy in MeV"""
         return self.M_u * U_TO_MEV
 
-_DATA_DIR = Path(__file__).parent.parent / "data"
+def get_data_dir() -> Path:
+    if getattr(sys, 'frozen', False):
+        base_dir = Path(sys.executable).parent
+    else:
+        base_dir = Path(__file__).resolve().parent.parent
+        
+    return base_dir / "data"
+
+_DATA_DIR = get_data_dir()
 _PARTICLES_CSV = _DATA_DIR / "particles.csv"
 
 def _load_particle_db(path: Path = _PARTICLES_CSV) -> dict[str, Particle]:
