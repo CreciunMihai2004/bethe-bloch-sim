@@ -5,6 +5,7 @@ Projectile definitions and database
 from __future__ import annotations
 
 import csv
+import itertools
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,7 +22,7 @@ class Particle:
     z: int          # charge number
     M_u: float      # rest mass in atomic mass units (aum)
     E0: Optional[float] = None  # initial kinetic energy (MeV)
-    color: str = field(default_factory=lambda: "#" + "".join(f"{int(c*255):02x}" for c in colorsys.hsv_to_rgb(random.random(), 1.0, 1.0)))
+    color: str = field(default_factory=lambda _gen=(0.618033988749895 * i % 1.0 for i in itertools.count()): "#" + "".join(f"{int(c*255):02x}" for c in colorsys.hsv_to_rgb(next(_gen), 1.0, 1.0)))
 
     @property
     def M(self) -> float:

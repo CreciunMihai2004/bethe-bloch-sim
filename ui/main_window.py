@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 
 from core.materials import MATERIAL_DB, get_material
 from core.particles import PARTICLE_DB, Particle
-from core.simulation import SimSettings, TrackResult, export_csv, export_xlsx
+from core.simulation import SimSettings, TrackResult, export_csv, export_xlsx, find_intersections
 from core.units import StoppingUnit, PlotMode
 from workers.sim_worker import SimJob, SimWorker
 from ui.plot_widget import BraggPlot
@@ -343,6 +343,7 @@ class MainWindow(QMainWindow):
     def _refresh_results_label(self):
         unit = self._current_unit()
         mode = self._current_plot_mode()
+        mass_thickness = self._current_mass_thickness()
         lines = []
         for r in self._results:
             if mode is PlotMode.DEDX:
@@ -353,6 +354,15 @@ class MainWindow(QMainWindow):
                 f"<b>{r.name}</b>: range = {r.range_mm:.4f} mm "
                 f"({r.range_mass:.5f} g/cm²), {extra}"
             )
+
+        if mode is PlotMode.DEDX and len(self._results) >= 2:
+            pts = find_intersections(self._results[0], self._results[1], unit, mass_thickness)
+            if pts:
+                x_unit = "g/cm²" if mass_thickness else "mm"
+                lines.append("<b>Intersection coordinates: </b>")
+                for idx, (ix, iy) in enumerate(pts, start=1):
+                    lines.append(f"x = {ix:.4f} {x_unit}, y = {iy:.4f} {unit.label}")
+
         self.results_label.setText("<br>".join(lines))
         
         

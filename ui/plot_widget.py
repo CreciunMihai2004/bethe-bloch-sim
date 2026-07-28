@@ -6,6 +6,8 @@ import pyqtgraph as pg
 import pyqtgraph.exporters
 from pyqtgraph.Qt import QtCore
 
+import numpy as np
+
 from PySide6.QtWidgets import QFileDialog
 
 from core.simulation import TrackResult, find_intersections
@@ -29,33 +31,46 @@ _THEMES = {
     ),
 }
 
+def _decimate(x: np.ndarray, y: np.ndarray, max_points: int = 2000):
+    """
+    Reduce point count for display/intersection purposes only.
+    Does not touch the underlying TrackResult data used for export.
+    """
+    n = len(x)
+    if n <= max_points:
+        return x, y
+    idx = np.linspace(0, n - 1, max_points).astype(int)
+    return x[idx], y[idx]
+
 
 class BraggPlot(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-
+    
         self._results: List[TrackResult] = []
         self._theme_name = "dark"
         self._unit: StoppingUnit = StoppingUnit.LINEAR_MM
         self._mass_thickness: bool = False
         self._mode        = PlotMode.DEDX
-
+    
         # ---- crosshair ----
         self._vline = pg.InfiniteLine(angle=90, movable=False)
         self._hline = pg.InfiniteLine(angle=0, movable=False)
         self.addItem(self._vline, ignoreBounds=True)
         self.addItem(self._hline, ignoreBounds=True)
-
+    
         self._coord_label = pg.TextItem(
             text="", anchor=(0.0, 1.0), fill=pg.mkBrush(40, 40, 40, 180)
         )
         self._coord_label.setZValue(20)
         self.addItem(self._coord_label, ignoreBounds=True)
-
+    
+        self._legend = self.addLegend(offset=(-10, 10))  # created once, reused across redraws
+    
         self._proxy = pg.SignalProxy(
             self.scene().sigMouseMoved, rateLimit=60, slot=self._on_mouse_move
         )
-
+    
         self._apply_theme()
 
     # ---- theme ----
@@ -122,24 +137,41 @@ class BraggPlot(pg.PlotWidget):
         self.addItem(self._vline, ignoreBounds=True)
         self.addItem(self._hline, ignoreBounds=True)
         self.addItem(self._coord_label, ignoreBounds=True)
-        self.addLegend(offset=(-10, 10))
+        self._legend.clear()
 
         t = _THEMES[self._theme_name]
 
         for r in self._results:
             x = r.x_in(mass_thickness)
             y = r.dEdx_in(unit) if mode is PlotMode.DEDX else r.E
-            
+
             self.plot(
                 x, y,
                 pen=pg.mkPen(r.color, width=2),
                 name=r.name,
+                autoDownsample=True,
+                downsampleMethod="peak",
             )
 
         if mode is PlotMode.DEDX and len(self._results) >= 2:
-            pts = find_intersections(
-                self._results[0], self._results[1], unit, mass_thickness
-            )
+            # Decimate before feeding the merge/interpolate in find_intersections —
+            # full-resolution data isn't needed just to locate crossing points.
+            r0, r1 = self._results[0], self._results[1]
+            x0, y0 = _decimate(r0.x_in(mass_thickness), r0.dEdx_in(unit))
+            x1, y1 = _decimate(r1.x_in(mass_thickness), r1.dEdx_in(unit))
+
+            # find_intersections expects TrackResult-like objects with
+            # .x_in()/.dEdx_in(); build lightweight stand-ins instead of
+            # changing its signature.
+            class _Decimated:
+                def __init__(self, x, y):
+                    self._x, self._y = x, y
+                def x_in(self, mass_thickness=False):
+                    return self._x
+                def dEdx_in(self, unit):
+                    return self._y
+
+            pts = find_intersections(_Decimated(x0, y0), _Decimated(x1, y1), unit, mass_thickness)
             for ix, iy in pts:
                 scatter = pg.ScatterPlotItem(
                     [ix], [iy],
@@ -152,16 +184,14 @@ class BraggPlot(pg.PlotWidget):
 
         x_label = "Mass thickness" if mass_thickness else "Distance x"
         x_units = "g/cm²" if mass_thickness else "mm"
-        
+
         if mode is PlotMode.DEDX:
             y_label, y_units = "dE/dx", unit.label
         else:
             y_label, y_units = "Kinetic energy", "MeV"
-            
-        self.setLabel("bottom", x_label, units=x_units,
-                      **{"color": t["fg"]})
-        self.setLabel("left", y_label, units=y_units,
-                      **{"color": t["fg"]})
+
+        self.setLabel("bottom", x_label, units=x_units, **{"color": t["fg"]})
+        self.setLabel("left", y_label, units=y_units, **{"color": t["fg"]})
 
     # ---- PNG export ----
 

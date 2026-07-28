@@ -107,14 +107,26 @@ def simulate(mat: Material,
     E0 = float(part.E0)
     x, E = x_start_m, E0
     x_vals, E_vals, dEdx_vals = [x], [E], []
+    
+    # ---- Safety cap ----
+    MAX_STEPS = 500_000
+    steps = 0
+    
+    # ---- Throttle progress reporting ----
+    last_reported = -1.0
+    PROGRESS_EVERY = 0.002 # report every 0.2% of energy loss
+    
+    # Minimum step floor
+    mix_dx_m = max_dx_m * 1e-4
 
-    while x < x_stop_m and E > settings.E_cutoff:
+    while x < x_stop_m and E > settings.E_cutoff and steps < MAX_STEPS:
+        steps += 1
         s1 = dEdx_mass(mat, part, E)
         if s1 <= 0:
             break
 
         dx = min(max_dx_m, settings.frac_loss * E / s1)
-        dx = max(dx, 1e-9)
+        dx = max(dx, mix_dx_m)
 
         E_mid = E - 0.5 * dx * s1
         if E_mid <= 0:
@@ -137,7 +149,10 @@ def simulate(mat: Material,
         x_vals.append(x); E_vals.append(E)
 
         if progress_cb is not None and E0 > 0:
-            progress_cb(min(1.0, (E0 - E) / E0))
+            frac = min(1.0, (E0 - E) / E0)
+            if frac - last_reported >= PROGRESS_EVERY:
+                progress_cb(frac)
+                last_reported = frac
 
     if len(dEdx_vals) < len(x_vals):
         dEdx_vals.append(np.nan)
@@ -262,7 +277,7 @@ def export_xlsx(results: List[TrackResult], path: str,
     for r in results:
         meta_rows.append({
             "Particle": r.name,
-            "Range (mm)": round(r.range_mm, 5),
+            "Range (mm)": round(r.range_mm, 2),
             "Range (g/cm²)": round(r.range_mass, 6),
             f"Peak dE/dx ({unit.label})": round(r.peak_dEdx(unit), 5),
             "dE/dx unit": unit.label,
