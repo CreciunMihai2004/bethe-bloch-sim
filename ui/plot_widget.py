@@ -17,14 +17,14 @@ from core.units import StoppingUnit, PlotMode
 _THEMES = {
     "dark": dict(
         bg="#1e1e1e",
-        fg="w",
+        fg="#ffffff",
         grid_alpha=0.3,
         cross_pen=pg.mkPen("#888888", style=QtCore.Qt.DashLine, width=1),
         label_fill=(40, 40, 40, 180),
     ),
     "light": dict(
         bg="#f5f5f5",
-        fg="k",
+        fg="#000000",
         grid_alpha=0.25,
         cross_pen=pg.mkPen("#666666", style=QtCore.Qt.DashLine, width=1),
         label_fill=(230, 230, 230, 200),
@@ -65,7 +65,7 @@ class BraggPlot(pg.PlotWidget):
         self._coord_label.setZValue(20)
         self.addItem(self._coord_label, ignoreBounds=True)
     
-        self._legend = self.addLegend(offset=(-10, 10))  # created once, reused across redraws
+        self._legend = self.addLegend(offset=(-10, 10))
     
         self._proxy = pg.SignalProxy(
             self.scene().sigMouseMoved, rateLimit=60, slot=self._on_mouse_move
@@ -89,6 +89,7 @@ class BraggPlot(pg.PlotWidget):
             ax = self.getAxis(axis)
             ax.setTextPen(t["fg"])
             ax.setPen(t["fg"])
+            ax.enableAutoSIPrefix(False)
 
     def toggle_theme(self) -> str:
         self._theme_name = "light" if self._theme_name == "dark" else "dark"
@@ -141,50 +142,8 @@ class BraggPlot(pg.PlotWidget):
 
         t = _THEMES[self._theme_name]
 
-        for r in self._results:
-            x = r.x_in(mass_thickness)
-            y = r.dEdx_in(unit) if mode is PlotMode.DEDX else r.E
-
-            self.plot(
-                x, y,
-                pen=pg.mkPen(r.color, width=2),
-                name=r.name,
-                autoDownsample=True,
-                downsampleMethod="peak",
-            )
-
-        if mode is PlotMode.DEDX and len(self._results) >= 2:
-            # Decimate before feeding the merge/interpolate in find_intersections —
-            # full-resolution data isn't needed just to locate crossing points.
-            r0, r1 = self._results[0], self._results[1]
-            x0, y0 = _decimate(r0.x_in(mass_thickness), r0.dEdx_in(unit))
-            x1, y1 = _decimate(r1.x_in(mass_thickness), r1.dEdx_in(unit))
-
-            # find_intersections expects TrackResult-like objects with
-            # .x_in()/.dEdx_in(); build lightweight stand-ins instead of
-            # changing its signature.
-            class _Decimated:
-                def __init__(self, x, y):
-                    self._x, self._y = x, y
-                def x_in(self, mass_thickness=False):
-                    return self._x
-                def dEdx_in(self, unit):
-                    return self._y
-
-            pts = find_intersections(_Decimated(x0, y0), _Decimated(x1, y1), unit, mass_thickness)
-            for ix, iy in pts:
-                scatter = pg.ScatterPlotItem(
-                    [ix], [iy],
-                    symbol="x", size=12,
-                    pen=pg.mkPen("red", width=2),
-                    brush=pg.mkBrush("red"),
-                    name="Intersection",
-                )
-                self.addItem(scatter)
-
         x_label = "Mass thickness" if mass_thickness else "Distance x"
         x_units = "g/cm²" if mass_thickness else "mm"
-
         if mode is PlotMode.DEDX:
             y_label, y_units = "dE/dx", unit.label
         else:
@@ -192,6 +151,47 @@ class BraggPlot(pg.PlotWidget):
 
         self.setLabel("bottom", x_label, units=x_units, **{"color": t["fg"]})
         self.setLabel("left", y_label, units=y_units, **{"color": t["fg"]})
+
+        try:
+            for r in self._results:
+                x = r.x_in(mass_thickness)
+                y = r.dEdx_in(unit) if mode is PlotMode.DEDX else r.E
+                self.plot(
+                    x, y,
+                    pen=pg.mkPen(r.color, width=2),
+                    name=r.name,
+                    autoDownsample=True,
+                    downsampleMethod="peak",
+                )
+        except Exception as e:
+            print(f"[BraggPlot] curve plotting failed: {e}")
+
+        if mode is PlotMode.DEDX and len(self._results) >= 2:
+            try:
+                r0, r1 = self._results[0], self._results[1]
+                x0, y0 = _decimate(r0.x_in(mass_thickness), r0.dEdx_in(unit))
+                x1, y1 = _decimate(r1.x_in(mass_thickness), r1.dEdx_in(unit))
+
+                class _Decimated:
+                    def __init__(self, x, y):
+                        self._x, self._y = x, y
+                    def x_in(self, mass_thickness=False):
+                        return self._x
+                    def dEdx_in(self, unit):
+                        return self._y
+
+                pts = find_intersections(_Decimated(x0, y0), _Decimated(x1, y1), unit, mass_thickness)
+                for ix, iy in pts:
+                    scatter = pg.ScatterPlotItem(
+                        [ix], [iy],
+                        symbol="x", size=12,
+                        pen=pg.mkPen("red", width=2),
+                        brush=pg.mkBrush("red"),
+                        name="Intersection",
+                    )
+                    self.addItem(scatter)
+            except Exception as e:
+                print(f"[BraggPlot] intersection calc failed: {e}")
 
     # ---- PNG export ----
 
