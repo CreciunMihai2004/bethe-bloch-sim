@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSettings
 from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QPushButton, QSpinBox, QVBoxLayout, QWidget, QCheckBox,
 )
 
 from core.materials import MATERIAL_DB, get_material
@@ -96,6 +96,14 @@ class MainWindow(QMainWindow):
         # ---- material box ----
         self.mat_combo = QComboBox()
         self.mat_combo.addItems(MATERIAL_DB.keys())
+        
+        self.gas_checkbox = QCheckBox("Gas")
+        
+        mat_row = QHBoxLayout()
+        mat_row.addWidget(self.mat_combo, stretch=1)
+        mat_row.addWidget(self.gas_checkbox)
+        mat_row_widget = QWidget()
+        mat_row_widget.setLayout(mat_row)
 
         self.density_input = QDoubleSpinBox()
         self.density_input.setRange(1e-8, 100.0)
@@ -103,11 +111,15 @@ class MainWindow(QMainWindow):
         self.density_input.setSuffix(" g/cm³")
         self.density_input.setSingleStep(0.000001)
         self.density_input.setValue(get_material(self.mat_combo.currentText()).rho)
+        
+        self.pressure_label = QLabel("—")
+        self.pressure_label.setVisible(False)
 
         mat_box = QGroupBox("Material")
         mat_form = QFormLayout(mat_box)
-        mat_form.addRow("Medium:", self.mat_combo)
+        mat_form.addRow("Medium:", mat_row_widget)
         mat_form.addRow("Density:", self.density_input)
+        mat_form.addRow("Pressure:", self.pressure_label)
 
         # ---- particles ----
         self.p1_panel = ParticlePanel("Particle 1", "Hydrogen-1")
@@ -188,6 +200,11 @@ class MainWindow(QMainWindow):
         # ---- signal connections ----
         self.mat_combo.currentTextChanged.connect(self._on_material_changed)
         self.density_input.valueChanged.connect(self.schedule_auto_run)
+        
+        self.mat_combo.currentTextChanged.connect(self._on_material_changed)
+        self.density_input.valueChanged.connect(self.       schedule_auto_run)
+        self.density_input.valueChanged.connect(self.       _update_pressure_display)
+        self.gas_checkbox.toggled.connect(self._on_gas_toggled)
 
         self.p1_panel.valueChanged.connect(self.schedule_auto_run)
         self.p2_panel.valueChanged.connect(self.schedule_auto_run)
@@ -203,6 +220,7 @@ class MainWindow(QMainWindow):
         self.btn_export_png.clicked.connect(self._on_export_png)
         
         self._sync_controls()
+        self._update_pressure_display()
 
     # ---- helpers ----
 
@@ -227,7 +245,32 @@ class MainWindow(QMainWindow):
         self.density_input.blockSignals(True)
         self.density_input.setValue(mat.rho)
         self.density_input.blockSignals(False)
+        self._update_pressure_display()
         self.schedule_auto_run()
+        
+    _P0_ATM = 1.0
+
+    def _update_pressure_display(self, *_args):
+        if not self.gas_checkbox.isChecked():
+            self.pressure_label.setVisible(False)
+            return
+
+        rho0 = get_material(self.mat_combo.currentText()).rho
+        rho = self.density_input.value()
+
+        if rho0 <= 0:
+            self.pressure_label.setText("—")
+            self.pressure_label.setVisible(True)
+            return
+
+        pressure_atm = self._P0_ATM * (rho / rho0)
+        self.pressure_label.setText(
+            f"{pressure_atm * 1013.25:.1f} mbar"
+        )
+        self.pressure_label.setVisible(True)
+
+    def _on_gas_toggled(self, _checked: bool):
+        self._update_pressure_display()
 
     # ---- theme toggle ----
 
@@ -380,6 +423,7 @@ class MainWindow(QMainWindow):
         # material
         s.setValue("material/name",  self.mat_combo.currentText())
         s.setValue("material/density",  self.density_input.value())
+        s.setValue("material/is_gas", self.gas_checkbox.isChecked())
         
         # particles
         for i, panel in enumerate([self.p1_panel, self.p2_panel], 1):
@@ -409,6 +453,11 @@ class MainWindow(QMainWindow):
             self.density_input.blockSignals(True)
             self.density_input.setValue(density)
             self.density_input.blockSignals(False)
+            
+        is_gas = s.value("material/is_gas", type=bool)
+        self.gas_checkbox.blockSignals(True)
+        self.gas_checkbox.setChecked(bool(is_gas))
+        self.gas_checkbox.blockSignals(False)
             
         # particles
         for i, panel in enumerate([self.p1_panel, self.p2_panel], 1):
@@ -452,6 +501,7 @@ class MainWindow(QMainWindow):
             
         # sync
         self._sync_controls()
+        self._update_pressure_display()
         self.schedule_auto_run()
         
     def closeEvent(self, event):
