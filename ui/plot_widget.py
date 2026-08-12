@@ -33,8 +33,7 @@ _THEMES = {
 
 def _decimate(x: np.ndarray, y: np.ndarray, max_points: int = 2000):
     """
-    Reduce point count for display/intersection purposes only.
-    Does not touch the underlying TrackResult data used for export.
+    Reduce point count for display/intersection purposes
     """
     n = len(x)
     if n <= max_points:
