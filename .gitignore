@@ -4,3 +4,5 @@ build/
 __pycache__/
 *.pyc
 old/
+
+# pyinstaller --noconfirm --onefile --windowed --icon="Bethe-Bloch-icon.ico" --name="BraggSim" --distpath . main.py

@@ -109,10 +109,10 @@ class MainWindow(QMainWindow):
         self.density_input.setRange(1e-8, 100.0)
         self.density_input.setDecimals(8)
         self.density_input.setSuffix(" g/cm³")
-        self.density_input.setSingleStep(0.000001)
+        self.density_input.setSingleStep(0.0000005)
         self.density_input.setValue(get_material(self.mat_combo.currentText()).rho)
         
-        self.pressure_label = QLabel("—")
+        self.pressure_label = QLabel("-")
         self.pressure_label.setVisible(False)
 
         mat_box = QGroupBox("Material")
@@ -265,7 +265,7 @@ class MainWindow(QMainWindow):
 
         pressure_atm = self._P0_ATM * (rho / rho0)
         self.pressure_label.setText(
-            f"{pressure_atm * 1013.25:.1f} mbar"
+            f"{pressure_atm * 1013.25:.2f} mbar"
         )
         self.pressure_label.setVisible(True)
 

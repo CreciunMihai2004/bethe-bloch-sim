@@ -8,3 +8,5 @@ pandas
 plotly
 kaleido
 streamlit
+
+# pyinstaller --noconfirm --onefile --windowed --icon="Bethe-Bloch-icon.ico" --name="BraggSim" --distpath . main.py
