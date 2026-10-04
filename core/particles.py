@@ -4,107 +4,72 @@ Projectile definitions and database
 
 from __future__ import annotations
 
-import csv
+import colorsys
 import itertools
-import random
 from dataclasses import dataclass, field
 from pathlib import Path
-import sys
-from typing import Optional
-import colorsys
+from typing import Iterator, Optional
 
 from .constants import U_TO_MEV
+from .data_io import get_data_dir, load_csv_db
+
+_DATA_DIR = get_data_dir()
+_PARTICLES_CSV = _DATA_DIR / "particles.csv"
+
+_GOLDEN_RATIO_CONJUGATE = 0.618033988749895
+
+
+def _color_sequence() -> Iterator[str]:
+    """Endless supply of well-separated plot colours (golden-ratio hue steps)"""
+    for i in itertools.count():
+        rgb = colorsys.hsv_to_rgb((_GOLDEN_RATIO_CONJUGATE * i) % 1.0, 1.0, 1.0)
+        yield "#" + "".join(f"{int(c * 255):02x}" for c in rgb)
+
+
+_colors = _color_sequence()
+
+
+def _next_color() -> str:
+    return next(_colors)
 
 
 @dataclass
 class Particle:
     name: str
     z: int          # charge number
-    M_u: float      # rest mass in atomic mass units (aum)
+    M_u: float      # rest mass in atomic mass units (amu)
     E0: Optional[float] = None  # initial kinetic energy (MeV)
-    color: str = field(default_factory=lambda _gen=(0.618033988749895 * i % 1.0 for i in itertools.count()): "#" + "".join(f"{int(c*255):02x}" for c in colorsys.hsv_to_rgb(next(_gen), 1.0, 1.0)))
+    color: str = field(default_factory=_next_color)
 
     @property
     def M(self) -> float:
         """Rest mass energy in MeV"""
         return self.M_u * U_TO_MEV
 
-def get_data_dir() -> Path:
-    if getattr(sys, 'frozen', False):
-        base_dir = Path(sys.executable).parent
-    else:
-        base_dir = Path(__file__).resolve().parent.parent
-        
-    return base_dir / "data"
 
-_DATA_DIR = get_data_dir()
-_PARTICLES_CSV = _DATA_DIR / "particles.csv"
+# ---- CSV loader ----
+
+def _build_particle(row: dict) -> Particle:
+    e0 = (row.get("E0") or "").strip()
+
+    # Use the CSV colour when given; otherwise the dataclass picks its own
+    color = (row.get("color") or "").strip()
+    extra = {"color": color} if color else {}
+
+    return Particle(
+        name = row["name"].strip(),
+        z    = int(row["z"]),
+        M_u  = float(row["M_u"]),
+        E0   = float(e0) if e0 else None,
+        **extra,
+    )
+
 
 def _load_particle_db(path: Path = _PARTICLES_CSV) -> dict[str, Particle]:
     """
     Parse path and return a {name: Particle} dict
     """
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Particle database not found: {path}\n"
-            f"Expected location: {path.resolve()}"
-        )
-
-    db: dict[str, Particle] = {}
-    errors: list[str] = []
-
-    with open(path, newline="", encoding="utf-8") as fh:
-        data_lines = [
-            line for line in fh
-            if line.strip() and not line.strip().startswith("#")
-        ]
-
-    reader = csv.DictReader(data_lines)
-
-    required = {"name", "z", "M_u"}
-    if reader.fieldnames and not required.issubset(reader.fieldnames):
-        missing = required - set(reader.fieldnames)
-        raise ValueError(
-            f"{path.name}: missing required columns: {missing}\n"
-            f"Found columns: {reader.fieldnames}"
-        )
-
-    for row_num, row in enumerate(reader, start=2):
-        try:
-            name = row["name"].strip()
-            if not name:
-                continue
-
-            e0_str = row.get("E0", "").strip()
-            e0: Optional[float] = float(e0_str) if e0_str else None
-
-            color = row.get("color", "").strip() or "cyan"
-
-            particle = Particle(
-                name  = name,
-                z     = int(row["z"]),
-                M_u   = float(row["M_u"]),
-                E0    = e0,
-            )
-            if name in db:
-                errors.append(f"row {row_num}: duplicate name '{name}' — skipped")
-                continue
-            db[name] = particle
-        except (ValueError, KeyError) as exc:
-            errors.append(f"row {row_num}: {exc} — skipped")
-
-    if errors:
-        import warnings
-        warnings.warn(
-            f"{path.name} — {len(errors)} row(s) skipped:\n" +
-            "\n".join(f"  • {e}" for e in errors),
-            stacklevel=2,
-        )
-
-    if not db:
-        raise ValueError(f"{path.name} contains no valid particle entries.")
-
-    return db
+    return load_csv_db(path, {"name", "z", "M_u"}, _build_particle, "Particle")
 
 
 PARTICLE_DB: dict[str, Particle] = _load_particle_db()

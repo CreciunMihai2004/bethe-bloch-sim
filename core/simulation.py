@@ -13,13 +13,18 @@ from .particles import Particle
 from .physics import dEdx_mass
 from .units import StoppingUnit, convert_from_mass
 
+_MAX_STEPS = 500_000       # safety cap on the number of integration steps
+_PROGRESS_EVERY = 0.002    # report progress every 0.2 % of the energy lost
+_MIN_STEP_FACTOR = 1e-4    # smallest allowed step, as a fraction of max_dx
+_TRIM_FRACTION = 0.015     # see _trim_after_peak
+
 
 @dataclass
 class SimSettings:
     x_start: float = 0.0        # mm
     x_stop: float = 1000.0      # mm
     E_cutoff: float = 0.001     # MeV
-    max_dx: float = 0.01         # mm
+    max_dx: float = 0.01        # mm
     frac_loss: float = 0.01     # max fractional energy loss per step
 
 
@@ -68,7 +73,8 @@ class TrackResult:
 # ---- cutoff helper ----
 
 def _trim_after_peak(x_vals: list, E_vals: list, dEdx_vals: list,
-                     threshold_frac: float = 0.015):
+                     threshold_frac: float = _TRIM_FRACTION):
+    """Cut all three per-step lists where dE/dx falls below threshold_frac of its peak"""
 
     arr = np.array(dEdx_vals, dtype=float)
     finite = arr[np.isfinite(arr)]
@@ -100,67 +106,55 @@ def simulate(mat: Material,
         raise ValueError(f"{part.name}: initial kinetic energy must be > 0 MeV.")
 
     mm_to_mass = mat.rho / 10.0
-    x_stop_m   = settings.x_stop  * mm_to_mass
-    max_dx_m   = settings.max_dx  * mm_to_mass
-    x_start_m  = settings.x_start * mm_to_mass
+    x_stop_m   = settings.x_stop * mm_to_mass
+    max_dx_m   = settings.max_dx * mm_to_mass
+    min_dx_m   = max_dx_m * _MIN_STEP_FACTOR
 
     E0 = float(part.E0)
-    x, E = x_start_m, E0
+    x, E = settings.x_start * mm_to_mass, E0
     x_vals, E_vals, dEdx_vals = [x], [E], []
-    
-    # ---- Safety cap ----
-    MAX_STEPS = 500_000
-    steps = 0
-    
-    # ---- Throttle progress reporting ----
-    last_reported = -1.0
-    PROGRESS_EVERY = 0.002 # report every 0.2% of energy loss
-    
-    # Minimum step floor
-    mix_dx_m = max_dx_m * 1e-4
 
-    while x < x_stop_m and E > settings.E_cutoff and steps < MAX_STEPS:
+    steps = 0
+    last_reported = -1.0
+
+    while x < x_stop_m and E > settings.E_cutoff and steps < _MAX_STEPS:
         steps += 1
         s1 = dEdx_mass(mat, part, E)
         if s1 <= 0:
             break
 
-        dx = min(max_dx_m, settings.frac_loss * E / s1)
-        dx = max(dx, mix_dx_m)
+        dx = max(min(max_dx_m, settings.frac_loss * E / s1), min_dx_m)
 
+        # midpoint rule: use the stopping power half-way through the step
         E_mid = E - 0.5 * dx * s1
-        if E_mid <= 0:
-            dEdx_vals.append(s1)
-            x += dx; E = 0.0
-            x_vals.append(x); E_vals.append(E)
-            break
-
-        s_mid = dEdx_mass(mat, part, E_mid)
+        s_mid = dEdx_mass(mat, part, E_mid) if E_mid > 0 else 0.0
         if s_mid <= 0:
+            # the particle stops inside this step: record it with the entry value
             dEdx_vals.append(s1)
-            x += dx; E = 0.0
-            x_vals.append(x); E_vals.append(E)
+            x += dx
+            x_vals.append(x)
+            E_vals.append(0.0)
             break
 
-        E_next = E - dx * s_mid
         dEdx_vals.append(s_mid)
         x += dx
-        E = max(E_next, 0.0)
-        x_vals.append(x); E_vals.append(E)
+        E = max(E - dx * s_mid, 0.0)
+        x_vals.append(x)
+        E_vals.append(E)
 
-        if progress_cb is not None and E0 > 0:
+        if progress_cb is not None:
             frac = min(1.0, (E0 - E) / E0)
-            if frac - last_reported >= PROGRESS_EVERY:
+            if frac - last_reported >= _PROGRESS_EVERY:
                 progress_cb(frac)
                 last_reported = frac
 
+    # every x has one dE/dx except the final point
     if len(dEdx_vals) < len(x_vals):
         dEdx_vals.append(np.nan)
 
     if progress_cb is not None:
         progress_cb(1.0)
 
-    # ---- trim to physical range ----
     x_vals, E_vals, dEdx_vals = _trim_after_peak(x_vals, E_vals, dEdx_vals)
 
     return TrackResult(
@@ -174,6 +168,7 @@ def simulate(mat: Material,
 
 
 # ---- intersection finder ----
+
 def find_intersections(a: TrackResult, b: TrackResult,
                        unit: StoppingUnit,
                        mass_thickness: bool = False) -> List[tuple]:
@@ -184,19 +179,24 @@ def find_intersections(a: TrackResult, b: TrackResult,
     df_b = pd.DataFrame({"x": xb, "yb": yb})
     df = (pd.merge(df_a, df_b, on="x", how="outer")
             .sort_values("x").reset_index(drop=True))
-    df["ya"] = df["ya"].interpolate(limit_area="inside")
-    df["yb"] = df["yb"].interpolate(limit_area="inside")
 
-    diff      = (df["ya"] - df["yb"]).dropna()
-    cross_idx = np.where(np.diff(np.sign(diff)) != 0)[0]
+    # Fill each curve on the merged grid by x value.  A plain interpolate()
+    # works by row position, which is wrong when the two curves have
+    # different step sizes (up to ~5 % off in a dense material)
+    by_x = df.set_index("x")
+    df["ya"] = by_x["ya"].interpolate(method="index", limit_area="inside").to_numpy()
+    df["yb"] = by_x["yb"].interpolate(method="index", limit_area="inside").to_numpy()
+
+    diff = (df["ya"] - df["yb"]).dropna()
+    # Compare "a >= b" instead of sign(): a difference of exactly 0 at a grid
+    # point (sign -1, 0, +1) would otherwise count as two crossings
+    nonneg    = (diff >= 0).to_numpy()
+    cross_idx = np.where(nonneg[:-1] != nonneg[1:])[0]
 
     intersections = []
     for loc in cross_idx:
         idx = diff.index[loc]
-        try:
-            nxt = diff.index[loc + 1]
-        except IndexError:
-            continue
+        nxt = diff.index[loc + 1]
         x_a, x_b = df.loc[idx, "x"],  df.loc[nxt, "x"]
         y1a, y1b = df.loc[idx, "ya"], df.loc[nxt, "ya"]
         y2a, y2b = df.loc[idx, "yb"], df.loc[nxt, "yb"]
@@ -206,28 +206,51 @@ def find_intersections(a: TrackResult, b: TrackResult,
             ix = x_a + t * (x_b - x_a)
             iy = y1a + t * dy1
             intersections.append((ix, iy))
-    return intersections
+
+    # a curve that only touches the other at a grid point is reported once
+    unique: List[tuple] = []
+    for ix, iy in intersections:
+        if not unique or not np.isclose(ix, unique[-1][0], rtol=1e-9, atol=0.0):
+            unique.append((ix, iy))
+    return unique
 
 
 # ---- export ----
 
 def _build_export_df(results: List[TrackResult], unit: StoppingUnit,
-                     mass_thickness: bool) -> pd.DataFrame:
-    """Shared table-building logic for CSV and Excel export"""
+                     mass_thickness: bool, unit_in_name: bool = False) -> pd.DataFrame:
+    """
+    Shared table-building logic for CSV and Excel export
+
+    All particles share one x column.  Both the energy and the dE/dx
+    columns are filled in by x value between a particle's own points, and
+    left empty beyond its range.  Two particles with the same name get a
+    "#2" suffix so their columns do not collide
+    """
     x_label = "x_g_per_cm2" if mass_thickness else "x_mm"
-    df = None
+    suffix = f"_{unit.label}" if unit_in_name else ""
+
+    labels: List[str] = []
     for r in results:
+        label, k = r.name, 2
+        while label in labels:
+            label, k = f"{r.name}#{k}", k + 1
+        labels.append(label)
+
+    df, cols = None, []
+    for r, label in zip(results, labels):
+        e_col, s_col = f"E_{label}_MeV", f"dEdx_{label}{suffix}"
+        cols += [e_col, s_col]
         d = pd.DataFrame({
-            x_label:           r.x_in(mass_thickness),
-            f"E_{r.name}_MeV": r.E,
-            f"dEdx_{r.name}":  r.dEdx_in(unit),
+            x_label: r.x_in(mass_thickness),
+            e_col:   r.E,
+            s_col:   r.dEdx_in(unit),
         })
         df = d if df is None else pd.merge(df, d, on=x_label, how="outer")
+
     df = df.sort_values(x_label).reset_index(drop=True)
-    for r in results:
-        col = f"dEdx_{r.name}"
-        if col in df.columns:
-            df[col] = df[col].interpolate(limit_area="inside")
+    filled = df.set_index(x_label)[cols].interpolate(method="index", limit_area="inside")
+    df[cols] = filled.to_numpy()
     return df
 
 
@@ -236,9 +259,26 @@ def export_csv(results: List[TrackResult], path: str,
     _build_export_df(results, unit, mass_thickness).to_csv(path, index=False)
 
 
-def export_xlsx(results: List[TrackResult], path: str,
-                unit: StoppingUnit, mass_thickness: bool = False) -> None:
-    _build_export_df(results, unit, mass_thickness).to_excel(path, index=False)
+def _write_sheet(ws, df: pd.DataFrame, max_width: int, freeze_header: bool = False) -> None:
+    """Write df to a worksheet with a styled header row and auto-sized columns"""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils.dataframe import dataframe_to_rows
+
+    for row in dataframe_to_rows(df, index=False, header=True):
+        ws.append(row)
+
+    for cell in ws[1]:
+        cell.fill = PatternFill("solid", fgColor="1E3A5F")
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center")
+
+    for col in ws.columns:
+        longest = max(len(str(cell.value or "")) for cell in col)
+        ws.column_dimensions[col[0].column_letter].width = min(longest + 2, max_width)
+
+    if freeze_header:
+        ws.freeze_panes = "A2"
+
 
 def export_xlsx(results: List[TrackResult], path: str,
                 unit: StoppingUnit, mass_thickness: bool = False) -> None:
@@ -246,85 +286,28 @@ def export_xlsx(results: List[TrackResult], path: str,
     Sheet "Bragg curves"
         One shared x-column, then alternating energy / dE/dx columns per
         particle — same structure as the CSV export so the two are
-        interchangeable
+        interchangeable (the Excel headers additionally carry the unit)
 
     Sheet "Metadata"
         Range, peak dE/dx, and unit information for each particle
     """
     import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment
-    from openpyxl.utils.dataframe import dataframe_to_rows
 
-    # ---- build the merged data frame ----
-    x_label = "x_g_per_cm2" if mass_thickness else "x_mm"
-    df = None
-    for r in results:
-        d = pd.DataFrame({
-            x_label: r.x_in(mass_thickness),
-            f"E_{r.name}_MeV": r.E,
-            f"dEdx_{r.name}_{unit.label}": r.dEdx_in(unit),
-        })
-        df = d if df is None else pd.merge(df, d, on=x_label, how="outer")
+    df = _build_export_df(results, unit, mass_thickness, unit_in_name=True)
 
-    df = df.sort_values(x_label).reset_index(drop=True)
-    for r in results:
-        col = f"dEdx_{r.name}_{unit.label}"
-        if col in df.columns:
-            df[col] = df[col].interpolate(limit_area="inside")
+    df_meta = pd.DataFrame([{
+        "Particle": r.name,
+        "Range (mm)": round(r.range_mm, 2),
+        # significant digits, not decimals: gas ranges are ~1e-4 g/cm²
+        "Range (g/cm²)": float(f"{r.range_mass:.6g}"),
+        f"Peak dE/dx ({unit.label})": round(r.peak_dEdx(unit), 5),
+        "dE/dx unit": unit.label,
+        "x-axis": "Mass thickness (g/cm²)" if mass_thickness else "Distance (mm)",
+    } for r in results])
 
-    # ---- build metadata frame ----
-    meta_rows = []
-    for r in results:
-        meta_rows.append({
-            "Particle": r.name,
-            "Range (mm)": round(r.range_mm, 2),
-            "Range (g/cm²)": round(r.range_mass, 6),
-            f"Peak dE/dx ({unit.label})": round(r.peak_dEdx(unit), 5),
-            "dE/dx unit": unit.label,
-            "x-axis": "Mass thickness (g/cm²)" if mass_thickness else "Distance (mm)",
-        })
-    df_meta = pd.DataFrame(meta_rows)
-
-    # ---- write workbook ----
     wb = openpyxl.Workbook()
-
-    # ---- sheet 1: data ----
     ws_data = wb.active
     ws_data.title = "Bragg curves"
-
-    header_fill = PatternFill("solid", fgColor="1E3A5F")
-    header_font = Font(bold=True, color="FFFFFF")
-    header_align = Alignment(horizontal="center")
-
-    for row in dataframe_to_rows(df, index=False, header=True):
-        ws_data.append(row)
-
-    # style the header row
-    for cell in ws_data[1]:
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = header_align
-
-    # auto-width (capped at 30)
-    for col in ws_data.columns:
-        max_len = max(len(str(cell.value or "")) for cell in col)
-        ws_data.column_dimensions[col[0].column_letter].width = min(max_len + 2, 30)
-
-    # freeze the header row
-    ws_data.freeze_panes = "A2"
-
-    # ---- sheet 2: metadata ----
-    ws_meta = wb.create_sheet("Metadata")
-    for row in dataframe_to_rows(df_meta, index=False, header=True):
-        ws_meta.append(row)
-
-    for cell in ws_meta[1]:
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = header_align
-
-    for col in ws_meta.columns:
-        max_len = max(len(str(cell.value or "")) for cell in col)
-        ws_meta.column_dimensions[col[0].column_letter].width = min(max_len + 2, 35)
-
+    _write_sheet(ws_data, df, max_width=30, freeze_header=True)
+    _write_sheet(wb.create_sheet("Metadata"), df_meta, max_width=35)
     wb.save(path)

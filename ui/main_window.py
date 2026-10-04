@@ -96,9 +96,9 @@ class MainWindow(QMainWindow):
         # ---- material box ----
         self.mat_combo = QComboBox()
         self.mat_combo.addItems(MATERIAL_DB.keys())
-        
+
         self.gas_checkbox = QCheckBox("Gas")
-        
+
         mat_row = QHBoxLayout()
         mat_row.addWidget(self.mat_combo, stretch=1)
         mat_row.addWidget(self.gas_checkbox)
@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         self.density_input.setSuffix(" g/cm³")
         self.density_input.setSingleStep(0.0000005)
         self.density_input.setValue(get_material(self.mat_combo.currentText()).rho)
-        
+
         self.pressure_label = QLabel("-")
         self.pressure_label.setVisible(False)
 
@@ -129,7 +129,7 @@ class MainWindow(QMainWindow):
         self.plot_mode_combo = QComboBox()
         for m in PlotMode:
             self.plot_mode_combo.addItem(m.label, m)
-            
+
         self.unit_combo = QComboBox()
         for u in StoppingUnit:
             self.unit_combo.addItem(u.label, u)
@@ -145,7 +145,7 @@ class MainWindow(QMainWindow):
         disp_form.addRow("x-axis:", self.xaxis_combo)
 
         # ---- action buttons ----
-        self.btn_theme = QPushButton("☀ Light mode")
+        self.btn_theme = QPushButton("☀  Light mode")
         self.btn_load_session = QPushButton("🗀 Load Last Session")
         self.btn_export_csv = QPushButton("Export CSV")
         self.btn_export_xlsx = QPushButton("Export Excel")
@@ -200,10 +200,7 @@ class MainWindow(QMainWindow):
         # ---- signal connections ----
         self.mat_combo.currentTextChanged.connect(self._on_material_changed)
         self.density_input.valueChanged.connect(self.schedule_auto_run)
-        
-        self.mat_combo.currentTextChanged.connect(self._on_material_changed)
-        self.density_input.valueChanged.connect(self.       schedule_auto_run)
-        self.density_input.valueChanged.connect(self.       _update_pressure_display)
+        self.density_input.valueChanged.connect(self._update_pressure_display)
         self.gas_checkbox.toggled.connect(self._on_gas_toggled)
 
         self.p1_panel.valueChanged.connect(self.schedule_auto_run)
@@ -218,7 +215,7 @@ class MainWindow(QMainWindow):
         self.btn_export_csv.clicked.connect(self._on_export_csv)
         self.btn_export_xlsx.clicked.connect(self._on_export_xlsx)
         self.btn_export_png.clicked.connect(self._on_export_png)
-        
+
         self._sync_controls()
         self._update_pressure_display()
 
@@ -234,7 +231,7 @@ class MainWindow(QMainWindow):
         material = deepcopy(get_material(self.mat_combo.currentText()))
         material.rho = self.density_input.value()
         return material
-    
+
     def _current_plot_mode(self) -> PlotMode:
         return self.plot_mode_combo.currentData()
 
@@ -247,7 +244,7 @@ class MainWindow(QMainWindow):
         self.density_input.blockSignals(False)
         self._update_pressure_display()
         self.schedule_auto_run()
-        
+
     _P0_ATM = 1.0
 
     def _update_pressure_display(self, *_args):
@@ -330,6 +327,7 @@ class MainWindow(QMainWindow):
         self._thread.started.connect(self._worker.run)
         self._worker.finished.connect(self.on_sim_done)
         self._worker.error.connect(self.on_sim_error)
+        self._worker.progress.connect(self._on_sim_progress)
 
         self._worker.finished.connect(self._thread.quit)
         self._worker.error.connect(self._thread.quit)
@@ -348,8 +346,12 @@ class MainWindow(QMainWindow):
         self._refresh_results_label()
         self.statusBar().showMessage("Done", 3000)
 
+    def _on_sim_progress(self, percent: int):
+        self.statusBar().showMessage(f"Simulating…  {percent} %")
+
     def on_sim_error(self, msg: str):
-        self.statusBar().showMessage("Error", 5000)
+        # auto-runs do not pop up a dialog, so keep the reason visible in the status bar
+        self.statusBar().showMessage(f"Error: {msg}", 8000)
         if self._current_run_shows_errors:
             QMessageBox.critical(self, "Simulation error", msg)
 
@@ -365,7 +367,7 @@ class MainWindow(QMainWindow):
             self._auto_run_timer.start(0)
 
     # ---- display-only refresh ----
-    
+
     def _sync_controls(self):
         self.unit_combo.setEnabled(
             self._current_plot_mode() is PlotMode.DEDX
@@ -395,7 +397,7 @@ class MainWindow(QMainWindow):
                 extra = f"E₀ = {r.E[0]:.3f} MeV"
             lines.append(
                 f"<b>{r.name}</b>: range = {r.range_mm:.4f} mm "
-                f"({r.range_mass:.5f} g/cm²), {extra}"
+                f"({r.range_mass:.4g} g/cm²), {extra}"
             )
 
         if mode is PlotMode.DEDX and len(self._results) >= 2:
@@ -407,24 +409,24 @@ class MainWindow(QMainWindow):
                     lines.append(f"x = {ix:.4f} {x_unit}, y = {iy:.4f} {unit.label}")
 
         self.results_label.setText("<br>".join(lines))
-        
-        
+
+
     # ---- session save + load ----
     #   Windows : HKCU\Software\BraggSim\BraggCurveSimulator
     #   macOS   : ~/Library/Preferences/com.BraggSim.BraggCurveSimulator.plist
     #   Linux   : ~/.config/BraggSim/BraggCurveSimulator.ini
-    
+
     _SETTINGS_ORG = "BraggSim"
     _SETTINGS_APP = "BraggCurveSimulator"
-    
+
     def _save_settings(self):
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
-        
+
         # material
         s.setValue("material/name",  self.mat_combo.currentText())
         s.setValue("material/density",  self.density_input.value())
         s.setValue("material/is_gas", self.gas_checkbox.isChecked())
-        
+
         # particles
         for i, panel in enumerate([self.p1_panel, self.p2_panel], 1):
             g = f"particle{i}"
@@ -432,62 +434,68 @@ class MainWindow(QMainWindow):
             s.setValue(f"{g}/z", panel.spin_z.value())
             s.setValue(f"{g}/M_u", panel.spin_M_u.value())
             s.setValue(f"{g}/E0", panel.input_E0.value())
-            
+
         # display
         s.setValue("display/unit", self.unit_combo.currentIndex())
         s.setValue("display/xaxis", self.xaxis_combo.currentIndex())
         s.setValue("display/mode", self.plot_mode_combo.currentIndex())
-        
+
     def _load_settings(self):
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
-            
+
+        # nothing saved yet (first launch) -> nothing to load
+        if not s.contains("material/name"):
+            self.statusBar().showMessage("No saved session found.", 4000)
+            return
+
         # material
         mat_name = s.value("material/name")
         if mat_name and mat_name in MATERIAL_DB:
             self.mat_combo.blockSignals(True)
             self.mat_combo.setCurrentText(mat_name)
             self.mat_combo.blockSignals(False)
-            
+
         density = s.value("material/density", type=float)
         if density and density > 0:
             self.density_input.blockSignals(True)
             self.density_input.setValue(density)
             self.density_input.blockSignals(False)
-            
+
         is_gas = s.value("material/is_gas", type=bool)
         self.gas_checkbox.blockSignals(True)
         self.gas_checkbox.setChecked(bool(is_gas))
         self.gas_checkbox.blockSignals(False)
-            
+
         # particles
         for i, panel in enumerate([self.p1_panel, self.p2_panel], 1):
             g = f"particle{i}"
-            
+
             panel.blockSignals(True)
             try:
                 preset = s.value(f"{g}/preset")
-                panel.combo.blockSignals(True)
-                panel.combo.setCurrentText(preset)
-                panel.combo.blockSignals(False)
-                
-                panel._load_preset(preset)
+                if preset and preset in PARTICLE_DB:
+                    panel.combo.blockSignals(True)
+                    panel.combo.setCurrentText(preset)
+                    panel.combo.blockSignals(False)
+
+                    panel._load_preset(preset)
 
                 z = s.value(f"{g}/z", type=int)
                 if z:
                     panel.spin_z.setValue(z)
-                    
+
                 M_u = s.value(f"{g}/M_u", type=float)
                 if M_u and M_u > 0:
                     panel.spin_M_u.setValue(M_u)
-                    
+
                 E0 = s.value(f"{g}/E0", type=float)
                 if E0 and E0 > 0:
                     panel.input_E0.setValue(E0)
-                    
+
             finally:
                 panel.blockSignals(False)
-                
-        # display 
+
+        # display
         for combo, key in [
             (self.unit_combo, "display/unit"),
             (self.xaxis_combo, "display/xaxis"),
@@ -498,16 +506,29 @@ class MainWindow(QMainWindow):
                 combo.blockSignals(True)
                 combo.setCurrentIndex(idx)
                 combo.blockSignals(False)
-            
+
         # sync
         self._sync_controls()
         self._update_pressure_display()
         self.schedule_auto_run()
-        
+
     def closeEvent(self, event):
         self._save_settings()
-        super().closeEvent(event) 
-                
+        self._auto_run_timer.stop()
+
+        # Closing while a simulation is running would destroy a live QThread
+        # ("QThread: Destroyed while thread is still running"), so stop it first
+        try:
+            if self._thread is not None and self._thread.isRunning():
+                if self._worker is not None:
+                    self._worker.cancel()
+                self._thread.quit()
+                self._thread.wait(3000)
+        except RuntimeError:
+            pass    # the thread object was already deleted: nothing to stop
+
+        super().closeEvent(event)
+
 
     # ---- export ----
 

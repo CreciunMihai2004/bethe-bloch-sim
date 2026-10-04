@@ -1,12 +1,7 @@
-PyQt6
 PySide6
 pyqtgraph
 numpy
-scipy
-matplotlib
 pandas
-plotly
-kaleido
-streamlit
+openpyxl
 
 # pyinstaller --noconfirm --onefile --windowed --icon="Bethe-Bloch-icon.ico" --name="BraggSim" --distpath . main.py

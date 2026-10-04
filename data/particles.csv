@@ -1,4 +1,4 @@
-# Projectile particle database 
+# Projectile particle database
 #
 # Columns
 # -------
@@ -16,5 +16,8 @@ Hydrogen-1,1,1.008,,
 Helium-4,2,4.003,,
 Lithium-7,3,7.016,,
 Beryllium-9,4,9.012182,,
+Beryllium-10,4,10.0135347,,
 Boron-10,5,10.012937,,
 Carbon-12,6,11.996709,,
+Carbon-13,6,13.0033548,,
+Carbon-14,6,14.0032420,,

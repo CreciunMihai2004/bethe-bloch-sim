@@ -45,31 +45,31 @@ def _decimate(x: np.ndarray, y: np.ndarray, max_points: int = 2000):
 class BraggPlot(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-    
+
         self._results: List[TrackResult] = []
         self._theme_name = "dark"
         self._unit: StoppingUnit = StoppingUnit.LINEAR_MM
         self._mass_thickness: bool = False
         self._mode        = PlotMode.DEDX
-    
+
         # ---- crosshair ----
         self._vline = pg.InfiniteLine(angle=90, movable=False)
         self._hline = pg.InfiniteLine(angle=0, movable=False)
         self.addItem(self._vline, ignoreBounds=True)
         self.addItem(self._hline, ignoreBounds=True)
-    
+
         self._coord_label = pg.TextItem(
             text="", anchor=(0.0, 1.0), fill=pg.mkBrush(40, 40, 40, 180)
         )
         self._coord_label.setZValue(20)
         self.addItem(self._coord_label, ignoreBounds=True)
-    
+
         self._legend = self.addLegend(offset=(-10, 10))
-    
+
         self._proxy = pg.SignalProxy(
             self.scene().sigMouseMoved, rateLimit=60, slot=self._on_mouse_move
         )
-    
+
         self._apply_theme()
 
     # ---- theme ----
@@ -114,13 +114,15 @@ class BraggPlot(pg.PlotWidget):
         self._hline.setPos(y)
 
         x_unit = "g/cm²" if self._mass_thickness else "mm"
-        
+
         if self._mode is PlotMode.DEDX:
             y_unit = self._unit.label
         else:
             y_unit = "MeV"
-        
-        self._coord_label.setText(f" x = {x:.3f} {x_unit}   y = {y:.4f} {y_unit} ")
+
+        # significant digits, not decimals: mass thickness in a gas is ~1e-4 g/cm²
+        # and would otherwise read "0.000"
+        self._coord_label.setText(f" x = {x:.5g} {x_unit}   y = {y:.5g} {y_unit} ")
         self._coord_label.setPos(x, y)
 
     # ---- data ----
@@ -180,13 +182,15 @@ class BraggPlot(pg.PlotWidget):
                         return self._y
 
                 pts = find_intersections(_Decimated(x0, y0), _Decimated(x1, y1), unit, mass_thickness)
-                for ix, iy in pts:
+                for i, (ix, iy) in enumerate(pts):
                     scatter = pg.ScatterPlotItem(
                         [ix], [iy],
                         symbol="x", size=12,
                         pen=pg.mkPen("red", width=2),
                         brush=pg.mkBrush("red"),
-                        name="Intersection",
+                        # only the first marker is named, otherwise the legend
+                        # gets one "Intersection" row per crossing
+                        name="Intersection" if i == 0 else None,
                     )
                     self.addItem(scatter)
             except Exception as e:
@@ -201,7 +205,16 @@ class BraggPlot(pg.PlotWidget):
         )
         if not path:
             return False
-        exporter = pyqtgraph.exporters.ImageExporter(self.plotItem)
-        exporter.parameters()["width"] = int(self.width() * 2)
-        exporter.export(path)
+
+        # the crosshair and coordinate label are hover helpers: keep them out of the file
+        hover_items = (self._vline, self._hline, self._coord_label)
+        for item in hover_items:
+            item.setVisible(False)
+        try:
+            exporter = pyqtgraph.exporters.ImageExporter(self.plotItem)
+            exporter.parameters()["width"] = int(self.width() * 2)
+            exporter.export(path)
+        finally:
+            for item in hover_items:
+                item.setVisible(True)
         return True

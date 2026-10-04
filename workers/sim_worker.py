@@ -19,14 +19,29 @@ class SimJob:
     settings: SimSettings
 
 
+class _Cancelled(Exception):
+    """Raised inside the progress callback to abort a running simulation"""
+
+
 class SimWorker(QObject):
     finished = Signal(object)   # emits List[TrackResult]
-    progress = Signal(int)      # 0..100
+    progress = Signal(int)      # 0..100, emitted only when the whole-number value changes
     error = Signal(str)
 
     def __init__(self, job: SimJob):
         super().__init__()
         self._job = job
+        self._cancelled = False
+        self._last_percent = -1
+
+    def cancel(self):
+        """Ask the running simulation to stop at its next progress report"""
+        self._cancelled = True
+
+    def _report(self, percent: int):
+        if percent != self._last_percent:
+            self._last_percent = percent
+            self.progress.emit(percent)
 
     def run(self):
         try:
@@ -36,13 +51,15 @@ class SimWorker(QObject):
             for i, part in enumerate(self._job.particles):
                 # map each particle's 0..1 progress into its slice of 0..100
                 def cb(frac, i=i):
-                    overall = (i + frac) / n
-                    self.progress.emit(int(overall * 100))
+                    if self._cancelled:
+                        raise _Cancelled()
+                    self._report(int((i + frac) / n * 100))
 
-                r = simulate(self._job.material, part, self._job.settings, cb)
-                results.append(r)
+                results.append(simulate(self._job.material, part, self._job.settings, cb))
 
-            self.progress.emit(100)
+            self._report(100)
             self.finished.emit(results)
+        except _Cancelled:
+            return      # the window is closing; nothing to report
         except Exception as e:
             self.error.emit(str(e))

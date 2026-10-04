@@ -1,27 +1,18 @@
 """
-Material definitions  and database
+Material definitions and database
 """
 
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 
 import numpy as np
 
-def get_data_dir() -> Path:
-    if getattr(sys, 'frozen', False):
-        base_dir = Path(sys.executable).parent
-    else:
-        base_dir = Path(__file__).resolve().parent.parent
-        
-    return base_dir / "data"
+from .data_io import get_data_dir, load_csv_db
 
 _DATA_DIR = get_data_dir()
 _MATERIALS_CSV = _DATA_DIR / "materials.csv"
-
 
 @dataclass
 class Material:
@@ -51,14 +42,26 @@ class Material:
         """Sternheimer C-bar constant for the density-effect correction"""
         return 2.0 * np.log(self.I_eV / self.plasma_energy_eV) + 1.0
 
-
 # ---- CSV loader ----
 
-def _float(val: str, default: float) -> float:
-    """Convert a CSV cell to float"""
+def _float(val: str | None, default: float) -> float:
+    """Convert a CSV cell to float, using `default` when the cell is empty or missing"""
     s = val.strip() if val else ""
     return float(s) if s else default
 
+
+def _build_material(row: dict) -> Material:
+    return Material(
+        name    = row["name"].strip(),
+        Z       = float(row["Z"]),
+        A       = float(row["A"]),
+        I_eV    = float(row["I_eV"]),
+        rho     = float(row["rho"]),
+        X0      = _float(row.get("X0"),      1.6),
+        X1      = _float(row.get("X1"),      4.0),
+        a_stern = _float(row.get("a_stern"), 0.10),
+        m_stern = _float(row.get("m_stern"), 3.0),
+    )
 
 def _load_material_db(path: Path = _MATERIALS_CSV) -> dict[str, Material]:
     """
@@ -66,67 +69,7 @@ def _load_material_db(path: Path = _MATERIALS_CSV) -> dict[str, Material]:
     Lines whose first non-whitespace character is `#` are treated as
     comments and skipped
     """
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Material database not found: {path}\n"
-            f"Expected location: {path.resolve()}"
-        )
-
-    db: dict[str, Material] = {}
-    errors: list[str] = []
-
-    with open(path, newline="", encoding="utf-8") as fh:
-        data_lines = [
-            line for line in fh
-            if line.strip() and not line.strip().startswith("#")
-        ]
-
-    reader = csv.DictReader(data_lines)
-
-    required = {"name", "Z", "A", "I_eV", "rho"}
-    if reader.fieldnames and not required.issubset(reader.fieldnames):
-        missing = required - set(reader.fieldnames)
-        raise ValueError(
-            f"{path.name}: missing required columns: {missing}\n"
-            f"Found columns: {reader.fieldnames}"
-        )
-
-    for row_num, row in enumerate(reader, start=2):
-        try:
-            name = row["name"].strip()
-            if not name:
-                continue
-            mat = Material(
-                name    = name,
-                Z       = float(row["Z"]),
-                A       = float(row["A"]),
-                I_eV    = float(row["I_eV"]),
-                rho     = float(row["rho"]),
-                X0      = _float(row.get("X0",      ""), 1.6),
-                X1      = _float(row.get("X1",      ""), 4.0),
-                a_stern = _float(row.get("a_stern", ""), 0.10),
-                m_stern = _float(row.get("m_stern", ""), 3.0),
-            )
-            if name in db:
-                errors.append(f"row {row_num}: duplicate name '{name}' — skipped")
-                continue
-            db[name] = mat
-        except (ValueError, KeyError) as exc:
-            errors.append(f"row {row_num}: {exc} — skipped")
-
-    if errors:
-        import warnings
-        warnings.warn(
-            f"{path.name} — {len(errors)} row(s) skipped:\n" +
-            "\n".join(f"  • {e}" for e in errors),
-            stacklevel=2,
-        )
-
-    if not db:
-        raise ValueError(f"{path.name} contains no valid material entries.")
-
-    return db
-
+    return load_csv_db(path, {"name", "Z", "A", "I_eV", "rho"}, _build_material, "Material")
 
 MATERIAL_DB: dict[str, Material] = _load_material_db()
 
@@ -139,7 +82,6 @@ def get_material(name: str) -> Material:
             f"Material '{name}' not found.\n"
             f"Available: {list(MATERIAL_DB)}"
         ) from None
-
 
 def reload() -> None:
     """Re-read the CSV and refresh MATERIAL_DB in-place"""
