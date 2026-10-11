@@ -10,7 +10,7 @@ import pandas as pd
 
 from .materials import Material
 from .particles import Particle
-from .physics import dEdx_mass
+from .physics import dEdx_mass, residual_range_mass
 from .units import StoppingUnit, convert_from_mass
 
 _MAX_STEPS = 500_000       # safety cap on the number of integration steps
@@ -22,24 +22,30 @@ _TRIM_FRACTION = 0.015     # see _trim_after_peak
 @dataclass
 class SimSettings:
     x_start: float = 0.0        # mm
-    x_stop: float = 1000.0      # mm
-    E_cutoff: float = 0.001     # MeV
+    x_stop: float = 1000000.0      # mm
+    E_cutoff: float = 0.001     # MeV   stepping stops here, the rest is integrated analytically
     max_dx: float = 0.01        # mm
     frac_loss: float = 0.01     # max fractional energy loss per step
+    trim_tail: bool = False     # cut the tail where dE/dx < 1.5 % of the peak (display option)
 
 
 @dataclass
 class TrackResult:
     """
-    Bragg curve result.  Arrays are already trimmed to the physical
-    range — they end where dE/dx first drops below 1.5 % of the Bragg
-    peak after the peak, which marks the boundary of Bethe-Bloch
-    validity (nuclear stopping takes over below that point)
+    Bragg curve result.
+
+    A track that ends inside the medium runs all the way to E = 0: stepping
+    stops at settings.E_cutoff and the last bit of path is added by
+    integrating dE/S(E) (physics.residual_range_mass), so range_mass is the
+    full CSDA path length.  A track that leaves the simulated region first
+    (x_stop reached) ends at its last step with E > 0.  If trim_tail was
+    requested the arrays are cut where dE/dx drops below 1.5 % of the peak.
 
     x_mass    : mass thickness (g/cm^2)
     E         : kinetic energy (MeV)
     dEdx_mass : mass stopping power (MeV cm^2 / g)
     rho       : material density (g/cm^3)
+    stopped   : True if the particle came to rest inside the medium
     """
     name: str
     color: str
@@ -47,6 +53,7 @@ class TrackResult:
     E: np.ndarray
     dEdx_mass: np.ndarray
     rho: float
+    stopped: bool = False
 
     @property
     def x_mm(self) -> np.ndarray:
@@ -116,6 +123,7 @@ def simulate(mat: Material,
 
     steps = 0
     last_reported = -1.0
+    stopped_in_step = False
 
     while x < x_stop_m and E > settings.E_cutoff and steps < _MAX_STEPS:
         steps += 1
@@ -134,6 +142,8 @@ def simulate(mat: Material,
             x += dx
             x_vals.append(x)
             E_vals.append(0.0)
+            E = 0.0
+            stopped_in_step = True
             break
 
         dEdx_vals.append(s_mid)
@@ -148,6 +158,16 @@ def simulate(mat: Material,
                 progress_cb(frac)
                 last_reported = frac
 
+    # Stepping ended at the energy cutoff: finish the track analytically so it
+    # ends at E = 0 instead of leaving E_cutoff of energy unaccounted for
+    if not stopped_in_step and 0.0 < E <= settings.E_cutoff:
+        x += residual_range_mass(mat, part, E)
+        dEdx_vals.append(dEdx_mass(mat, part, E))   # dE/dx at the start of the last piece
+        x_vals.append(x)
+        E_vals.append(0.0)
+        dEdx_vals.append(0.0)                       # S(E) -> 0 as E -> 0
+        E = 0.0
+
     # every x has one dE/dx except the final point
     if len(dEdx_vals) < len(x_vals):
         dEdx_vals.append(np.nan)
@@ -155,7 +175,8 @@ def simulate(mat: Material,
     if progress_cb is not None:
         progress_cb(1.0)
 
-    x_vals, E_vals, dEdx_vals = _trim_after_peak(x_vals, E_vals, dEdx_vals)
+    if settings.trim_tail:
+        x_vals, E_vals, dEdx_vals = _trim_after_peak(x_vals, E_vals, dEdx_vals)
 
     return TrackResult(
         name=part.name,
@@ -164,6 +185,7 @@ def simulate(mat: Material,
         E=np.array(E_vals),
         dEdx_mass=np.array(dEdx_vals),
         rho=mat.rho,
+        stopped=(E == 0.0),
     )
 
 
@@ -174,6 +196,12 @@ def find_intersections(a: TrackResult, b: TrackResult,
                        mass_thickness: bool = False) -> List[tuple]:
     xa, ya = a.x_in(mass_thickness), a.dEdx_in(unit)
     xb, yb = b.x_in(mass_thickness), b.dEdx_in(unit)
+
+    # The closing point of a stopped track (E = 0, dE/dx = 0) is where the
+    # analytic tail ends, not a measurement: leaving it in creates a false
+    # crossing as the curve drops to zero, so treat zeros as "no data"
+    ya = np.where(ya > 0, ya, np.nan)
+    yb = np.where(yb > 0, yb, np.nan)
 
     df_a = pd.DataFrame({"x": xa, "ya": ya})
     df_b = pd.DataFrame({"x": xb, "yb": yb})

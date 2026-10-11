@@ -4,21 +4,27 @@ Material definitions and database
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
 from .data_io import get_data_dir, load_csv_db
+from .elements import ELEMENTS, parse_formula
 
 _DATA_DIR = get_data_dir()
 _MATERIALS_CSV = _DATA_DIR / "materials.csv"
 
+# "Isobutane (C4H10)" -> "C4H10"
+_NAME_FORMULA_RE = re.compile(r"\(([^()]+)\)\s*$")
+
+
 @dataclass
 class Material:
     name: str
-    Z: float
-    A: float       # g/mol
+    Z: float       # effective atomic number (for a compound: sum of Z over the molecule)
+    A: float       # g/mol (for a compound: molar mass)
     I_eV: float    # mean excitation energy (eV)
     rho: float     # g/cm^3
 
@@ -27,6 +33,44 @@ class Material:
     X1: float = 4.0
     a_stern: float = 0.10
     m_stern: float = 3.0
+
+    # Optional chemical formula ("C4H10").  When empty it is read from a
+    # trailing "(...)" in the name.  Used only by the per-atom low-energy models
+    formula: str = ""
+
+    # Filled in __post_init__:
+    #   components : ((Z_i, M_i, n_i), ...)  atoms making up one "molecule"
+    #   mol_mass   : sum(n_i * M_i) in g/mol
+    #   composition_source : "formula" or "single-atom"
+    components: tuple = field(init=False, repr=False)
+    mol_mass: float = field(init=False, repr=False)
+    composition_source: str = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self._resolve_composition()
+
+    def _resolve_composition(self) -> None:
+        formula = self.formula.strip()
+        if not formula:
+            m = _NAME_FORMULA_RE.search(self.name)
+            formula = m.group(1) if m else ""
+
+        counts = parse_formula(formula)
+        if counts:
+            comps = tuple((ELEMENTS[s][0], ELEMENTS[s][1], n) for s, n in counts.items())
+            z_sum = sum(z * n for z, _, n in comps)
+            m_sum = sum(m * n for _, m, n in comps)
+            # accept the formula only if it agrees with the Z and A in the CSV
+            if abs(z_sum - self.Z) <= 0.5 and abs(m_sum - self.A) <= 0.02 * self.A:
+                self.components = comps
+                self.mol_mass = m_sum
+                self.composition_source = "formula"
+                return
+
+        # elementary material (or an unparseable name): one atom of (Z, A)
+        self.components = ((self.Z, self.A, 1),)
+        self.mol_mass = self.A
+        self.composition_source = "single-atom"
 
     @property
     def I_MeV(self) -> float:
@@ -61,6 +105,7 @@ def _build_material(row: dict) -> Material:
         X1      = _float(row.get("X1"),      4.0),
         a_stern = _float(row.get("a_stern"), 0.10),
         m_stern = _float(row.get("m_stern"), 3.0),
+        formula = (row.get("formula") or "").strip(),
     )
 
 def _load_material_db(path: Path = _MATERIALS_CSV) -> dict[str, Material]:
