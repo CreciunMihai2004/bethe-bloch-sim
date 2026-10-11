@@ -6,6 +6,7 @@ BraggSim calculates continuous slowing down approximation ranges, stopping power
 *   **Interactive UI:** A clean Qt-based interface for fast parameter adjustments and real-time plotting.
 *   **Extensible Databases:** Add new materials and projectiles simply by editing CSV files.
 *   **Robust Physics Engine:** Smoothly transitions between high-energy and low-energy stopping power models.
+*   **Exports:** CSV, Excel and PNG.
 *   **Standalone Deployment:** Available as a single, portable Windows executable (`.exe`).
 
 ## 📂 Project Structure
@@ -14,20 +15,25 @@ BraggSim calculates continuous slowing down approximation ranges, stopping power
 BraggSim/
 │
 ├── main.py                # Main application entry point
-└── core/                  # Core integration and stopping power models
-    ├── constants.py
-    ├── materials.py
-    ├── particles.py
-    ├── physics.py
-    ├── simulation.py
-    └── units.py
-└── ui/                    # User interface 
-    ├── main_window.py
-    └── plot_widget.py
-│
-└── data/                  # External configuration files
-    ├── materials.csv
-    └── particles.csv
+├── core/                  # Core integration and stopping power models
+│   ├── constants.py
+│   ├── data_io.py
+│   ├── materials.py
+│   ├── particles.py
+│   ├── physics.py
+│   ├── simulation.py
+│   └── units.py
+├── ui/                    # User interface
+│   ├── main_window.py
+│   └── plot_widget.py
+├── workers/               # Background simulation thread
+│   └── sim_worker.py
+├── data/                  # External configuration files
+│   ├── materials.csv
+│   └── particles.csv
+└── tests/                 # pytest suite for the core
+    ├── conftest.py
+    └── test_core.py
 ```
 
 ## The Physics Models
