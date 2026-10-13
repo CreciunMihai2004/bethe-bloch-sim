@@ -1,7 +1,3 @@
-"""
-Bethe-Bloch stopping-power
-"""
-
 import math
 
 import numpy as np
@@ -36,8 +32,6 @@ def effective_charge(z: int, beta: float) -> float:
 def zbl_reduced_energy(E_keV: float, Z1: float, Z2: float, M1: float, M2: float) -> float:
     """
     ZBL reduced energy epsilon (universal screening length)
-
-        eps = 32.53 M2 E / (Z1 Z2 (M1 + M2) (Z1^0.23 + Z2^0.23))     E in keV, M in u
     """
     return 32.53 * M2 * E_keV / (Z1 * Z2 * (M1 + M2) * (Z1 ** 0.23 + Z2 ** 0.23))
 
@@ -45,10 +39,8 @@ def zbl_reduced_energy(E_keV: float, Z1: float, Z2: float, M1: float, M2: float)
 def zbl_reduced_stopping(eps):
     """
     ZBL universal reduced nuclear stopping s_n(eps)  (works on scalars and arrays)
-        eps <= 30 :  ln(1 + 1.1383 eps) / (2 (eps + 0.01321 eps^0.21226 + 0.19593 eps^0.5))
-        eps  > 30 :  ln(eps) / (2 eps)
     """
-    if np.ndim(eps) == 0:                            # fast path: the integrator calls this per step
+    if np.ndim(eps) == 0: 
         e = float(eps)
         if e <= 30.0:
             return math.log(1.0 + 1.1383 * e) / (
@@ -57,7 +49,7 @@ def zbl_reduced_stopping(eps):
         return math.log(e) / (2.0 * e)
 
     eps = np.asarray(eps, dtype=float)
-    low = np.minimum(eps, 30.0)                      # keeps the unused branch finite
+    low = np.minimum(eps, 30.0) 
     s_low = np.log(1.0 + 1.1383 * low) / (
         2.0 * (low + 0.01321 * low ** 0.21226 + 0.19593 * low ** 0.5)
     )
@@ -68,7 +60,7 @@ def zbl_reduced_stopping(eps):
 def zbl_nuclear_stopping(E_kin: float, part: Particle, mat: Material) -> float:
     """
     Nuclear mass stopping power (MeV cm^2 / g) from the ZBL universal potential
-    (Ziegler, Biersack & Littmark 1985).  E_kin in MeV
+    (Ziegler, Biersack & Littmark 1985).
     """
     if E_kin <= 1e-6:
         return 0.0
@@ -82,7 +74,7 @@ def zbl_nuclear_stopping(E_kin: float, part: Particle, mat: Material) -> float:
     # absolute stopping cross section, eV / (1e15 atoms / cm^2)
     S_n = (8.462 * Z1 * Z2 * M1 * s_n) / ((M1 + M2) * (Z1 ** 0.23 + Z2 ** 0.23))
 
-    # -> mass stopping power: x (N_A / M2) atoms/g, x 1e-15 (per 1e15 atoms), x 1e-6 (eV -> MeV)
+    # mass stopping power: x (N_A / M2) atoms/g, x 1e-15 (per 1e15 atoms), x 1e-6 (eV -> MeV)
     return max(S_n * (N_A / M2) * 1e-21, 0.0)
 
 

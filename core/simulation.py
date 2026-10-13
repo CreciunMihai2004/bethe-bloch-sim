@@ -1,7 +1,3 @@
-"""
-Simulation and post-processing
-"""
-
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
