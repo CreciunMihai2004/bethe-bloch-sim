@@ -2,6 +2,8 @@
 Bethe-Bloch stopping-power
 """
 
+import math
+
 import numpy as np
 
 from .constants import K, ME_C2, N_A
@@ -31,36 +33,57 @@ def effective_charge(z: int, beta: float) -> float:
         return 0.0
     return z * (1.0 - np.exp(-125.0 * beta * z ** (-2.0 / 3.0)))
 
+def zbl_reduced_energy(E_keV: float, Z1: float, Z2: float, M1: float, M2: float) -> float:
+    """
+    ZBL reduced energy epsilon (universal screening length)
+
+        eps = 32.53 M2 E / (Z1 Z2 (M1 + M2) (Z1^0.23 + Z2^0.23))     E in keV, M in u
+    """
+    return 32.53 * M2 * E_keV / (Z1 * Z2 * (M1 + M2) * (Z1 ** 0.23 + Z2 ** 0.23))
+
+
+def zbl_reduced_stopping(eps):
+    """
+    ZBL universal reduced nuclear stopping s_n(eps)  (works on scalars and arrays)
+        eps <= 30 :  ln(1 + 1.1383 eps) / (2 (eps + 0.01321 eps^0.21226 + 0.19593 eps^0.5))
+        eps  > 30 :  ln(eps) / (2 eps)
+    """
+    if np.ndim(eps) == 0:                            # fast path: the integrator calls this per step
+        e = float(eps)
+        if e <= 30.0:
+            return math.log(1.0 + 1.1383 * e) / (
+                2.0 * (e + 0.01321 * e ** 0.21226 + 0.19593 * e ** 0.5)
+            )
+        return math.log(e) / (2.0 * e)
+
+    eps = np.asarray(eps, dtype=float)
+    low = np.minimum(eps, 30.0)                      # keeps the unused branch finite
+    s_low = np.log(1.0 + 1.1383 * low) / (
+        2.0 * (low + 0.01321 * low ** 0.21226 + 0.19593 * low ** 0.5)
+    )
+    s_high = np.log(np.maximum(eps, 1.0)) / (2.0 * np.maximum(eps, 1.0))
+    return np.where(eps <= 30.0, s_low, s_high)
+
+
 def zbl_nuclear_stopping(E_kin: float, part: Particle, mat: Material) -> float:
     """
-    Calculates the nuclear mass stopping power using the ZBL (Ziegler-Biersack-Littmark) universal formula
+    Nuclear mass stopping power (MeV cm^2 / g) from the ZBL universal potential
+    (Ziegler, Biersack & Littmark 1985).  E_kin in MeV
     """
     if E_kin <= 1e-6:
         return 0.0
 
-    E_keV = E_kin * 1000.0
+    Z1, M1 = part.z, part.M_u
+    Z2, M2 = mat.Z, mat.A
 
-    Z1 = part.z
-    M1 = part.M_u
-    Z2 = mat.Z
-    M2 = mat.A
+    eps = zbl_reduced_energy(E_kin * 1000.0, Z1, Z2, M1, M2)
+    s_n = zbl_reduced_stopping(eps)
 
-    # Calculate reduced energy (epsilon)
-    denominator = Z1 * Z2 * (M1 + M2) * (Z1**0.67 + Z2**0.67)**0.5
-    epsilon = (32.53 * M2 * E_keV) / denominator
+    # absolute stopping cross section, eV / (1e15 atoms / cm^2)
+    S_n = (8.462 * Z1 * Z2 * M1 * s_n) / ((M1 + M2) * (Z1 ** 0.23 + Z2 ** 0.23))
 
-    # num = 0.5 * np.log(1.0 + 1.1383 * epsilon)
-    num = 0.5 * np.log(1.0 + epsilon)
-    den = epsilon + 0.01321 * (epsilon**0.21226) + 0.19593 * (epsilon**0.5)
-    s_n = num / den
-
-    # Convert to physical cross section S_n
-    S_n_eV_cm2 = (8.462 * Z1 * Z2 * M1 * s_n) / ((M1 + M2) * (Z1**0.23 + Z2**0.23))
-
-    # Convert to Mass Stopping Power (MeV cm^2 / g)
-    mass_stopping_power = S_n_eV_cm2 * (N_A / M2) * 1e-21
-
-    return max(mass_stopping_power, 0.0)
+    # -> mass stopping power: x (N_A / M2) atoms/g, x 1e-15 (per 1e15 atoms), x 1e-6 (eV -> MeV)
+    return max(S_n * (N_A / M2) * 1e-21, 0.0)
 
 
 def dEdx_components(mat: Material, part: Particle, E_kin: float) -> tuple[float, float]:

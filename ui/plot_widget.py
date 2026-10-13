@@ -31,17 +31,6 @@ _THEMES = {
     ),
 }
 
-def _decimate(x: np.ndarray, y: np.ndarray, max_points: int = 2000):
-    """
-    Reduce point count for display/intersection purposes
-    """
-    n = len(x)
-    if n <= max_points:
-        return x, y
-    idx = np.linspace(0, n - 1, max_points).astype(int)
-    return x[idx], y[idx]
-
-
 class BraggPlot(pg.PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -169,19 +158,8 @@ class BraggPlot(pg.PlotWidget):
 
         if mode is PlotMode.DEDX and len(self._results) >= 2:
             try:
-                r0, r1 = self._results[0], self._results[1]
-                x0, y0 = _decimate(r0.x_in(mass_thickness), r0.dEdx_in(unit))
-                x1, y1 = _decimate(r1.x_in(mass_thickness), r1.dEdx_in(unit))
-
-                class _Decimated:
-                    def __init__(self, x, y):
-                        self._x, self._y = x, y
-                    def x_in(self, mass_thickness=False):
-                        return self._x
-                    def dEdx_in(self, unit):
-                        return self._y
-
-                pts = find_intersections(_Decimated(x0, y0), _Decimated(x1, y1), unit, mass_thickness)
+                pts = find_intersections(self._results[0], self._results[1],
+                                         unit, mass_thickness)
                 for i, (ix, iy) in enumerate(pts):
                     scatter = pg.ScatterPlotItem(
                         [ix], [iy],

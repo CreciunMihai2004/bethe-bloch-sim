@@ -86,5 +86,8 @@ def get_particle(name: str) -> Particle:
 
 
 def reload() -> None:
-    global PARTICLE_DB
-    PARTICLE_DB = _load_particle_db()
+    """Re-read the CSV and refresh PARTICLE_DB in place (other modules hold a reference to it)"""
+    fresh = _load_particle_db()
+    PARTICLE_DB.clear()
+    PARTICLE_DB.update(fresh)
+

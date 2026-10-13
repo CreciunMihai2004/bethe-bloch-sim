@@ -67,10 +67,18 @@ class ParticlePanel(QGroupBox):
 
     def particle(self) -> Particle:
         e0 = self.input_E0.value()
+        z, M_u = self.spin_z.value(), self.spin_M_u.value()
+
+        # z or M edited away from the preset: do not label the curve with the preset's name
+        preset = PARTICLE_DB.get(self.combo.currentText())
+        name = self.combo.currentText()
+        if preset is not None and (z != preset.z or abs(M_u - preset.M_u) > 5e-4):
+            name += " (custom)"
+
         return Particle(
-            name=self.combo.currentText(),
-            z=self.spin_z.value(),
-            M_u=self.spin_M_u.value(),
+            name=name,
+            z=z,
+            M_u=M_u,
             E0=e0 if e0 > 0 else None,
             color=self._color,
         )
@@ -385,6 +393,25 @@ class MainWindow(QMainWindow):
             self._current_plot_mode(),
         )
 
+    # the model-limit note is only worth showing when a noticeable share of the energy is untracked
+    _UNSPENT_WARN_FRACTION = 0.02
+
+    def _track_warnings(self, r: TrackResult) -> List[str]:
+        """Warning lines (rich text) for a track whose range is not the whole story"""
+        amber = "<span style='color:#e8a33d'>⚠ {}</span>"
+        if r.stop_reason in ("x_stop", "max_steps"):
+            why = ("the depth limit was reached" if r.stop_reason == "x_stop"
+                   else "the step limit was reached")
+            return [amber.format(
+                f"{r.name}: track cut — {why} with {r.E[-1]:.3f} MeV left, "
+                f"so the range above is a lower bound.")]
+        if r.stop_reason == "model_limit" and r.unspent_fraction > self._UNSPENT_WARN_FRACTION:
+            return [amber.format(
+                f"{r.name}: tracking stops at {r.E[-1] * 1000:.0f} keV "
+                f"({r.unspent_fraction:.0%} of E₀), where the Bethe-Bloch model is not valid "
+                f"any more. The slowing-down below that is not included in the range.")]
+        return []
+
     def _refresh_results_label(self):
         unit = self._current_unit()
         mode = self._current_plot_mode()
@@ -399,6 +426,7 @@ class MainWindow(QMainWindow):
                 f"<b>{r.name}</b>: range = {r.range_mm:.4f} mm "
                 f"({r.range_mass:.4g} g/cm²), {extra}"
             )
+            lines.extend(self._track_warnings(r))
 
         if mode is PlotMode.DEDX and len(self._results) >= 2:
             pts = find_intersections(self._results[0], self._results[1], unit, mass_thickness)

@@ -84,6 +84,7 @@ def get_material(name: str) -> Material:
         ) from None
 
 def reload() -> None:
-    """Re-read the CSV and refresh MATERIAL_DB in-place"""
-    global MATERIAL_DB
-    MATERIAL_DB = _load_material_db()
+    """Re-read the CSV and refresh MATERIAL_DB in place (other modules hold a reference to it)"""
+    fresh = _load_material_db()
+    MATERIAL_DB.clear()
+    MATERIAL_DB.update(fresh)
