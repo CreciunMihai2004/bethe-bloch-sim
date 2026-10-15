@@ -9,18 +9,13 @@ from .particles import Particle
 from .physics import dEdx_components
 from .units import StoppingUnit, convert_from_mass
 
-_MAX_STEPS = 500_000       # safety cap on the number of integration steps
-_PROGRESS_EVERY = 0.002    # report progress every 0.2 % of the energy lost
-_MIN_STEP_FACTOR = 1e-4    # smallest allowed step, as a fraction of max_dx
-
 
 @dataclass
 class SimSettings:
     x_start: float = 0.0        # mm
     x_stop: float = 1000.0      # mm
     E_cutoff: float = 0.001     # MeV
-    max_dx: float = 0.01        # mm
-    frac_loss: float = 0.01     # max fractional energy loss per step
+    dlnE: float = 0.0025        # energy-grid spacing, d(ln E) per point (0.25 % in E)
 
 
 @dataclass
@@ -39,8 +34,8 @@ class TrackResult:
                       this energy, so the track stops here; the remaining
                       slowing-down is NOT in range_mm (see unspent_fraction)
         "x_stop"      the depth limit of SimSettings was hit first
-        "max_steps"   the step cap was hit first
-        With "x_stop" or "max_steps", range_mm is only a lower bound.
+        "max_steps"   no longer produced by simulate() (kept for old exports)
+        With "x_stop", range_mm is only a lower bound.
     """
     name: str
     color: str
@@ -84,83 +79,98 @@ class TrackResult:
 
 # ---- integrator ----
 
+def _locate_model_limit(mat: Material, part: Particle, hi: float, lo: float) -> float:
+    """
+    Lowest energy in [lo, hi] where electronic stopping is still valid, given that
+    it is valid at hi and not at lo (three vectorized sweeps of 101 points each,
+    so the bracket shrinks by 100x per sweep)
+    """
+    for _ in range(3):
+        E = np.linspace(hi, lo, 101)
+        bad = np.flatnonzero(dEdx_components(mat, part, E)[0] <= 0)
+        if bad.size == 0:                 # valid all the way down to lo
+            return float(lo)
+        j = int(bad[0])
+        hi, lo = E[j - 1], E[j]
+    return float(hi)
+
+
 def simulate(mat: Material,
              part: Particle,
              settings: SimSettings,
              progress_cb: Optional[Callable[[float], None]] = None) -> TrackResult:
+    """
+    Slow the particle down on a logarithmic energy grid.
 
+    The stopping power is evaluated for the whole grid in one vectorized call and
+    the depth follows from  x(E) = x_start + integral_E^E0 dE' / S(E')  (trapezoid
+    rule in ln E). The grid is cut where electronic stopping is no longer valid
+    ("model_limit") and at the depth limit ("x_stop").
+    """
     if part.E0 is None or part.E0 <= 0:
         raise ValueError(f"{part.name}: initial kinetic energy must be > 0 MeV.")
 
-    mm_to_mass = mat.rho / 10.0
-    x_stop_m   = settings.x_stop * mm_to_mass
-    max_dx_m   = settings.max_dx * mm_to_mass
-    min_dx_m   = max_dx_m * _MIN_STEP_FACTOR
-
-    E0 = float(part.E0)
-    x, E = settings.x_start * mm_to_mass, E0
-    x_vals, E_vals, dEdx_vals = [x], [E], []
-
-    steps = 0
-    last_reported = -1.0
-    stop_reason = None
-
-    while x < x_stop_m and E > settings.E_cutoff and steps < _MAX_STEPS:
-        steps += 1
-        elec1, nuc1 = dEdx_components(mat, part, E)
-        s1 = elec1 + nuc1
-        if elec1 <= 0:
-            # Bethe-Bloch is not valid any more
-            stop_reason = "model_limit"
-            break
-
-        dx = max(min(max_dx_m, settings.frac_loss * E / s1), min_dx_m)
-
-        # midpoint rule: use the stopping power half-way through the step
-        E_mid = E - 0.5 * dx * s1
-        elec_m, nuc_m = dEdx_components(mat, part, E_mid) if E_mid > 0 else (0.0, 0.0)
-        s_mid = elec_m + nuc_m
-        if elec_m <= 0:
-            # this step would cross the validity limit: end the track at its start
-            dEdx_vals.append(s1)
-            stop_reason = "model_limit"
-            break
-
-        dEdx_vals.append(s_mid)
-        x += dx
-        E = max(E - dx * s_mid, 0.0)
-        x_vals.append(x)
-        E_vals.append(E)
-
-        if progress_cb is not None:
-            frac = min(1.0, (E0 - E) / E0)
-            if frac - last_reported >= _PROGRESS_EVERY:
-                progress_cb(frac)
-                last_reported = frac
-
-    if stop_reason is None:
-        if x >= x_stop_m and E > settings.E_cutoff:
-            stop_reason = "x_stop"
-        elif steps >= _MAX_STEPS and E > settings.E_cutoff:
-            stop_reason = "max_steps"
-        else:
-            stop_reason = "stopped"
-
-    if len(dEdx_vals) < len(x_vals):
-        dEdx_vals.append(dEdx_vals[-1] if dEdx_vals else float("nan"))
-
     if progress_cb is not None:
-        progress_cb(1.0)
+        progress_cb(0.0)
 
-    return TrackResult(
-        name=part.name,
-        color=part.color,
-        x_mass=np.array(x_vals),
-        E=np.array(E_vals),
-        dEdx_mass=np.array(dEdx_vals),
-        rho=mat.rho,
-        stop_reason=stop_reason,
-    )
+    mm_to_mass = mat.rho / 10.0
+    x_start_m  = settings.x_start * mm_to_mass
+    x_stop_m   = settings.x_stop * mm_to_mass
+    E0 = float(part.E0)
+    E_floor = settings.E_cutoff
+
+    def result(x, E, S, reason):
+        if progress_cb is not None:
+            progress_cb(1.0)
+        return TrackResult(name=part.name, color=part.color,
+                           x_mass=np.asarray(x, float), E=np.asarray(E, float),
+                           dEdx_mass=np.asarray(S, float), rho=mat.rho,
+                           stop_reason=reason)
+
+    nothing = float("nan")
+    if E0 <= E_floor:
+        return result([x_start_m], [E0], [nothing], "stopped")
+
+    n = max(2, int(np.ceil(np.log(E0 / E_floor) / settings.dlnE)) + 1)
+    E = np.geomspace(E0, E_floor, n)                    # descending
+    elec, nuc = dEdx_components(mat, part, E)
+    S = elec + nuc
+
+    # the track ends at the first grid point where Bethe-Bloch is not valid any more
+    stop_reason = "stopped"
+    invalid = np.flatnonzero(elec <= 0)
+    if invalid.size:
+        cut = int(invalid[0])
+        if cut == 0:
+            return result([x_start_m], [E0], [nothing], "model_limit")
+        # S is small at the limit, so a tail of even a fraction of a grid step matters:
+        # end the track at the limit itself, not at the last grid point above it
+        E_lim = _locate_model_limit(mat, part, hi=E[cut - 1], lo=E[cut])
+        S_lim = sum(dEdx_components(mat, part, E_lim))
+        E = np.append(E[:cut], E_lim)
+        S = np.append(S[:cut], S_lim)
+        stop_reason = "model_limit"
+
+    # depth: trapezoid rule for  integral (E / S) d(ln E)
+    f = E / S
+    lnE = np.log(E)
+    seg = 0.5 * (f[1:] + f[:-1]) * (lnE[:-1] - lnE[1:])
+    x = x_start_m + np.concatenate(([0.0], np.cumsum(seg)))
+
+    # depth limit: end the track exactly at x_stop
+    if x[0] >= x_stop_m or x[-1] > x_stop_m:
+        k = int(np.searchsorted(x, x_stop_m)) 
+        if k == 0:
+            x, E, S = x[:1], E[:1], S[:1]
+        else:
+            E_c = np.interp(x_stop_m, x, E)
+            S_c = np.interp(x_stop_m, x, S)
+            x = np.append(x[:k], x_stop_m)
+            E = np.append(E[:k], E_c)
+            S = np.append(S[:k], S_c)
+        stop_reason = "x_stop"
+
+    return result(x, E, S, stop_reason)
 
 
 # ---- intersection finder ----

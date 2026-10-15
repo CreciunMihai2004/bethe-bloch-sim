@@ -73,3 +73,20 @@ def test_zbl_absolute_stopping_matches_the_analytic_conversion():
 
 def test_zbl_nuclear_stopping_vanishes_at_zero_energy(water, proton):
     assert zbl_nuclear_stopping(0.0, proton, water) == 0.0
+
+
+def test_array_input_matches_scalar_calls(be10, isobutane_low_p, water, proton):
+    """dEdx_components is vectorized: one call on a grid == a call per energy"""
+    E = np.geomspace(1e-5, 1e3, 400)          # includes energies at and below the validity limit
+    for mat, part in ((isobutane_low_p, be10), (water, proton)):
+        elec, nuc = dEdx_components(mat, part, E)
+        one_by_one = np.array([dEdx_components(mat, part, float(e)) for e in E])
+        assert elec == pytest.approx(one_by_one[:, 0], rel=1e-12, abs=0)
+        assert nuc == pytest.approx(one_by_one[:, 1], rel=1e-12, abs=0)
+        assert np.array_equal(elec == 0, one_by_one[:, 0] == 0)
+
+
+def test_scalar_input_still_returns_plain_floats(water, proton):
+    elec, nuc = dEdx_components(water, proton, 10.0)
+    assert type(elec) is float and type(nuc) is float
+    assert type(dEdx_mass(water, proton, 10.0)) is float

@@ -98,7 +98,7 @@ class MainWindow(QMainWindow):
 
         self._auto_run_timer = QTimer(self)
         self._auto_run_timer.setSingleShot(True)
-        self._auto_run_timer.setInterval(350)
+        self._auto_run_timer.setInterval(80)
         self._auto_run_timer.timeout.connect(self._run_auto)
 
         # ---- material box ----

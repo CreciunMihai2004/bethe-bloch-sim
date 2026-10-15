@@ -10,6 +10,7 @@ Thesis working title: *Numerical Modelling of Heavy-Ion Energy Loss and Bragg Cu
 | 2 | Cleanups: numpy intersection finder (identical results, ~8× faster), in-place DB reload, CODATA 2018 constants | tests |
 | 3 | ZBL nuclear stopping restored to the published form (`1.1383` factor, `Z^0.23` screening, ε > 30 branch) | s_n peaks at ε = 0.327; matches the analytic conversion |
 | 4 | Model limit is explicit: the track stops where Bethe-Bloch is invalid, the UI and Excel metadata say so, and the 1.5 %-of-peak trim heuristic is gone | range unchanged (372.7 mm Be-10) |
+| 5 | Speed: stopping power is vectorized and the integrator walks a log-energy grid instead of a 0.01 mm stepping loop (Be-10 in gas 333 ms -> 0.7 ms, p 100 MeV in water 94 ms -> 0.8 ms; curves have ~800-3000 points instead of up to 37 000); the track ends exactly at the electronic-stopping limit; auto-run debounce 350 -> 80 ms | ranges within 0.12 % of the old integrator (Be-10 372.73 mm, B-10 273.43 mm), `python -m pytest` |
 
 ## Validation log
 

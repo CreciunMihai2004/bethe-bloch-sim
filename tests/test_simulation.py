@@ -10,7 +10,7 @@ from core.simulation import SimSettings, simulate
 def _csda_integral(mat, part, E_hi, E_lo, n=20001):
     """Independent range estimate R = integral dE / S(E) on a log-energy grid (g/cm^2)"""
     E = np.geomspace(E_lo, E_hi, n)
-    f = 1.0 / np.array([dEdx_mass(mat, part, e) for e in E])
+    f = 1.0 / dEdx_mass(mat, part, E)
     return float(np.trapezoid(f * E, np.log(E)))      # dE = E dlnE
 
 
@@ -84,3 +84,47 @@ def test_unspent_fraction_is_zero_for_a_particle_that_really_stops(water, proton
     proton.E0 = 5.0
     r = simulate(water, proton, SimSettings(x_stop=1e4), )
     assert r.unspent_fraction < 0.01
+
+
+# ---- grid integrator: accuracy and speed ----
+
+def test_range_is_converged_in_the_energy_grid(be10, isobutane_low_p):
+    """The default grid must sit on the converged value (a 25x finer grid changes nothing visible)"""
+    coarse = simulate(isobutane_low_p, be10, SimSettings()).range_mm
+    fine = simulate(isobutane_low_p, be10, SimSettings(dlnE=1e-4)).range_mm
+    assert coarse == pytest.approx(fine, rel=5e-4)
+
+
+def test_model_limit_track_ends_exactly_at_the_limit(be10, isobutane_low_p):
+    """Stopping power is small there, so ending a grid step early would drop part of the range"""
+    from core.physics import dEdx_components
+    r = simulate(isobutane_low_p, be10, SimSettings())
+    E_end = r.E[-1]
+    assert dEdx_components(isobutane_low_p, be10, E_end)[0] > 0
+    assert dEdx_components(isobutane_low_p, be10, E_end * (1 - 1e-4))[0] == 0
+
+
+def test_depth_limit_ends_the_track_exactly_at_x_stop(water, proton):
+    proton.E0 = 100.0
+    r = simulate(water, proton, SimSettings(x_stop=10.0))
+    assert r.stop_reason == "x_stop"
+    assert r.range_mm == pytest.approx(10.0, rel=1e-9)
+    assert 0 < r.E[-1] < r.E[0]
+
+
+def test_x_start_offsets_the_whole_track(water, proton):
+    proton.E0 = 5.0
+    a = simulate(water, proton, SimSettings(x_stop=1e4))
+    b = simulate(water, proton, SimSettings(x_start=2.0, x_stop=1e4))
+    assert b.x_mm[0] == pytest.approx(2.0)
+    assert (b.x_mm - 2.0) == pytest.approx(a.x_mm)
+
+
+def test_simulation_is_fast_enough_for_live_updates(be10, isobutane_low_p):
+    """The old stepping loop needed ~330 ms for this case; the GUI re-runs it on every edit"""
+    import time
+    simulate(isobutane_low_p, be10, SimSettings())                 # warm-up
+    t0 = time.perf_counter()
+    for _ in range(5):
+        simulate(isobutane_low_p, be10, SimSettings())
+    assert (time.perf_counter() - t0) / 5 < 0.05
