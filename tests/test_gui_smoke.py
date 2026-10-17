@@ -33,7 +33,7 @@ def test_main_window_draws_results(qapp, water, proton):
     worker.finished.connect(win.on_sim_done)
     worker.run()
     assert win._results
-    assert "range" in win.results_label.text()
+    assert "Range (mm)" in win.results.text()
     win.close()
 
 
@@ -45,35 +45,36 @@ def test_edited_particle_is_labelled_custom(qapp):
     assert panel.particle().name == "Beryllium-10 (custom)"
 
 
-def test_results_label_warns_when_track_is_cut(qapp, water, proton):
+def test_results_warns_when_track_is_cut(qapp, water, proton):
     from ui.main_window import MainWindow
     win = MainWindow()
     proton.E0 = 100.0
     worker = SimWorker(SimJob(water, [proton], SimSettings(x_stop=10.0)))
     worker.finished.connect(win.on_sim_done)
     worker.run()
-    assert "cut" in win.results_label.text().lower()
+    assert "cut by the depth limit" in win.results.text()
     win.close()
 
 
-def test_results_label_has_no_warning_for_a_track_that_runs_to_rest(qapp, water, proton, be10, isobutane_low_p):
+def test_results_has_no_warning_for_a_track_that_runs_to_rest(qapp, water, proton, be10, isobutane_low_p):
     from ui.main_window import MainWindow
     win = MainWindow()
+    win.detector_panel.box.setChecked(False)          # no anodes: nothing to say about E_res
 
     proton.E0 = 5.0
     w = SimWorker(SimJob(water, [proton], SimSettings()))
     w.finished.connect(win.on_sim_done)
     w.run()
-    assert "⚠" not in win.results_label.text()
+    assert "⚠" not in win.results.text()
 
     w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))     # used to warn: ~14 % unspent
     w.finished.connect(win.on_sim_done)
     w.run()
-    assert "⚠" not in win.results_label.text()
+    assert "⚠" not in win.results.text()
     win.close()
 
 
-def test_results_label_reports_the_model_limit_when_there_is_no_low_energy_law(
+def test_results_reports_the_model_limit_when_there_is_no_low_energy_law(
         qapp, be10, isobutane_low_p, monkeypatch):
     import core.physics as physics
     from ui.main_window import MainWindow
@@ -82,7 +83,7 @@ def test_results_label_reports_the_model_limit_when_there_is_no_low_energy_law(
     w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))     # ~14 % unspent again
     w.finished.connect(win.on_sim_done)
     w.run()
-    assert "⚠" in win.results_label.text() and "not valid" in win.results_label.text()
+    assert "⚠" in win.results.text() and "not valid" in win.results.text()
     win.close()
 
 
@@ -119,8 +120,8 @@ def test_main_window_runs_the_beam_through_windows(qapp, isobutane_low_p, be10):
     w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings(), windows=job.windows))
     w.finished.connect(win.on_sim_done)
     w.run()
-    text = win.results_label.text()
-    assert "windows:" in text and "into the detector" in text and "⚠" not in text
+    text = win.results.text()
+    assert "Beam: 1.6 MeV" in text and "1. Mylar (C10H8O4), 1 µm" in text and "⚠" not in text
     assert win._results[0].E[0] < 1.6
 
     thick = win.windows_panel.windows()
@@ -128,7 +129,7 @@ def test_main_window_runs_the_beam_through_windows(qapp, isobutane_low_p, be10):
     w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings(), windows=thick))
     w.finished.connect(win.on_sim_done)
     w.run()
-    assert "stops inside window 1" in win.results_label.text()
+    assert "Stops inside window 1" in win.results.text()
     win.close()
 
 
@@ -154,3 +155,83 @@ def test_windows_are_saved_with_the_session(qapp):
         fresh.close()
     finally:
         QSettings(org, app).clear()
+
+
+# ---- layout, anodes, pressure finder ----
+
+def test_window_material_names_have_room(qapp):
+    from ui.main_window import MainWindow
+    win = MainWindow()
+    win.show()
+    win.tabs.setCurrentIndex(1)
+    win.windows_panel.add_window("Kapton (C22H10N2O5)", 0.3, "um")
+    qapp.processEvents()
+    combo = win.windows_panel.table.cellWidget(0, 0)
+    needed = combo.fontMetrics().horizontalAdvance("Kapton (C22H10N2O5)")
+    assert combo.width() >= needed + 20, (combo.width(), needed)
+    win.close()
+
+
+def test_anode_columns_follow_the_detector_tab(qapp, isobutane_low_p, be10):
+    from ui.main_window import MainWindow
+    win = MainWindow()
+    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))
+    w.finished.connect(win.on_sim_done)
+    w.run()
+    t = win.results.table
+    assert not t.isColumnHidden(4) and t.item(0, 4).text() != "—"
+    win.detector_panel.box.setChecked(False)
+    assert t.isColumnHidden(4) and t.isColumnHidden(5)
+    win.close()
+
+
+def test_pressure_finder_puts_the_crossing_on_the_boundary(qapp):
+    from ui.main_window import MainWindow
+    win = MainWindow()
+    win.material_panel.combo.setCurrentText("Isobutane (C4H10)")
+    win.material_panel.set_density(1.08e-5)
+    win.p1_panel.combo.setCurrentText("Beryllium-10")
+    win.p1_panel.input_E0.setValue(1.6)
+    win.p2_panel.combo.setCurrentText("Boron-10")
+    win.p2_panel.input_E0.setValue(1.6)
+    win.place_crossing_on_boundary()
+    rho = win.material_panel.density.value()
+    assert rho != pytest.approx(1.08e-5, rel=1e-3)
+
+    job = win._build_job(False)
+    w = SimWorker(job)
+    w.finished.connect(win.on_sim_done)
+    w.run()
+    assert "on the anode boundary" in win.results.crossing_label.text()
+    win.close()
+
+
+def test_detector_settings_are_saved_with_the_session(qapp):
+    from ui.main_window import MainWindow
+    win = MainWindow()
+    win.detector_panel.gap.setValue(7.5)
+    win.detector_panel.anode1.setValue(100.0)
+    win.detector_panel.box.setChecked(False)
+    win.tabs.setCurrentIndex(2)
+    win.close()                                        # closeEvent saves (test settings name)
+
+    fresh = MainWindow()
+    fresh._load_settings()
+    assert fresh.detector_panel.gap.value() == 7.5
+    assert fresh.detector_panel.anode1.value() == 100.0
+    assert not fresh.detector_panel.box.isChecked()
+    assert fresh.tabs.currentIndex() == 2
+    fresh.close()
+
+
+def test_density_box_keeps_full_precision(qapp):
+    from ui.widgets import ScientificSpinBox
+    box = ScientificSpinBox()
+    box.setRange(1e-12, 100.0)
+    box.setSuffix(" g/cm³")
+    box.setValue(1.4524337e-05)
+    assert box.value() == pytest.approx(1.4524337e-05, rel=1e-9)
+    assert box.text() == "1.452434e-05 g/cm³"
+    assert box.valueFromText("1,08e-5 g/cm³") == pytest.approx(1.08e-5)
+    box.stepBy(1)
+    assert box.value() == pytest.approx(1.4524337e-05 * 1.01)

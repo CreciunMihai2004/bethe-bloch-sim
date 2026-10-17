@@ -4,7 +4,7 @@ Material definitions and database
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +14,7 @@ from .elements import parse_formula
 
 _DATA_DIR = get_data_dir()
 _MATERIALS_CSV = _DATA_DIR / "materials.csv"
+_WINDOWS_CSV = _DATA_DIR / "windows.csv"
 
 @dataclass
 class Material:
@@ -92,20 +93,33 @@ def _load_material_db(path: Path = _MATERIALS_CSV) -> dict[str, Material]:
     """
     return load_csv_db(path, {"name", "Z", "A", "I_eV", "rho"}, _build_material, "Material")
 
+
+def _load_window_db(path: Path = _WINDOWS_CSV) -> dict[str, Material]:
+    """Window / foil materials; the file is optional"""
+    return _load_material_db(path) if path.exists() else {}
+
+
+# detector media (materials.csv) and window materials (windows.csv)
 MATERIAL_DB: dict[str, Material] = _load_material_db()
+WINDOW_MATERIAL_DB: dict[str, Material] = _load_window_db()
 
 
 def get_material(name: str) -> Material:
-    try:
-        return MATERIAL_DB[name]
-    except KeyError:
-        raise KeyError(
-            f"Material '{name}' not found.\n"
-            f"Available: {list(MATERIAL_DB)}"
-        ) from None
+    """
+    A copy of the named material (detector media first, then window materials):
+    callers may change it, e.g. set the density, without touching the database
+    """
+    for db in (MATERIAL_DB, WINDOW_MATERIAL_DB):
+        if name in db:
+            return replace(db[name])
+    raise KeyError(
+        f"Material '{name}' not found.\n"
+        f"Available: {list(MATERIAL_DB) + list(WINDOW_MATERIAL_DB)}"
+    )
+
 
 def reload() -> None:
-    """Re-read the CSV and refresh MATERIAL_DB in place (other modules hold a reference to it)"""
-    fresh = _load_material_db()
-    MATERIAL_DB.clear()
-    MATERIAL_DB.update(fresh)
+    """Re-read the CSV files and refresh the databases in place (other modules hold a reference to them)"""
+    for db, fresh in ((MATERIAL_DB, _load_material_db()), (WINDOW_MATERIAL_DB, _load_window_db())):
+        db.clear()
+        db.update(fresh)

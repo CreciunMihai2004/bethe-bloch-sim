@@ -1,21 +1,27 @@
 """Windows between the beam and the detector: an editable, ordered list"""
 
-from copy import deepcopy
 from typing import List
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSettings, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDoubleSpinBox, QGroupBox, QHBoxLayout, QHeaderView,
-    QLabel, QPushButton, QTableWidget, QVBoxLayout,
+    QAbstractItemView, QAbstractSpinBox, QComboBox, QDoubleSpinBox, QGroupBox, QHBoxLayout,
+    QHeaderView, QPushButton, QSizePolicy, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from core.beamline import UNIT_LABELS, Window
-from core.materials import MATERIAL_DB, get_material
+from core.materials import MATERIAL_DB, WINDOW_MATERIAL_DB, get_material
 
 _DEFAULT_MATERIAL = "Mylar (C10H8O4)"
 
 
-class WindowsPanel(QGroupBox):
+def _material_names() -> list[str]:
+    """Window materials first, then the detector media (a gas cell or a solid can be a layer too)"""
+    names = list(WINDOW_MATERIAL_DB)
+    names += [n for n in MATERIAL_DB if n not in WINDOW_MATERIAL_DB]
+    return names
+
+
+class WindowsPanel(QWidget):
     """
     Ordered list of windows (first row = first window the beam meets). The group box
     is checkable: unchecked means no windows, without losing the list.
@@ -24,27 +30,34 @@ class WindowsPanel(QGroupBox):
     valueChanged = Signal()
 
     def __init__(self):
-        super().__init__("Windows (beam → detector)")
-        self.setCheckable(True)
-        self.setChecked(False)
+        super().__init__()
+        self.box = QGroupBox("Windows (beam → detector)")
+        self.box.setCheckable(True)
+        self.box.setChecked(False)
+        self.box.setToolTip("With windows on, E₀ is the beam energy before the first window.\n"
+                            "First row = first window the beam meets.")
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Material", "Thickness", "Unit"])
-        self.table.verticalHeader().setVisible(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.verticalHeader().setDefaultSectionSize(28)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.setMinimumHeight(110)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)            # names get the spare width
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        self.table.setColumnWidth(1, 72)
+        self.table.setColumnWidth(2, 76)
+        self.table.setMinimumHeight(150)
 
         self.btn_add = QPushButton("+ Add")
         self.btn_remove = QPushButton("− Remove")
         self.btn_up = QPushButton("▲")
         self.btn_down = QPushButton("▼")
-        for b in (self.btn_up, self.btn_down):
+        for b, tip in ((self.btn_up, "Move up (earlier in the beam)"),
+                       (self.btn_down, "Move down (closer to the detector)")):
             b.setFixedWidth(32)
+            b.setToolTip(tip)
 
         buttons = QHBoxLayout()
         buttons.addWidget(self.btn_add)
@@ -53,38 +66,48 @@ class WindowsPanel(QGroupBox):
         buttons.addWidget(self.btn_up)
         buttons.addWidget(self.btn_down)
 
-        hint = QLabel("E0 above is then the beam energy before the first window.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray; font-size: 11px;")
+        inner = QVBoxLayout(self.box)
+        inner.addWidget(self.table)
+        inner.addLayout(buttons)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self.table)
-        layout.addLayout(buttons)
-        layout.addWidget(hint)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.box)
 
         self.btn_add.clicked.connect(lambda: self.add_window())
         self.btn_remove.clicked.connect(self._remove_selected)
         self.btn_up.clicked.connect(lambda: self._move_selected(-1))
         self.btn_down.clicked.connect(lambda: self._move_selected(+1))
-        self.toggled.connect(lambda _: self.valueChanged.emit())
+        self.box.toggled.connect(lambda _: self.valueChanged.emit())
+
+    # the group box is the switch; keep the old QGroupBox-style API for callers
+    def isChecked(self) -> bool:
+        return self.box.isChecked()
+
+    def setChecked(self, on: bool):
+        self.box.setChecked(on)
 
     # ---- rows ----
 
     def add_window(self, material: str = _DEFAULT_MATERIAL, thickness: float = 1.0,
                    unit: str = "um", row: int | None = None):
-        if material not in MATERIAL_DB:
-            material = _DEFAULT_MATERIAL if _DEFAULT_MATERIAL in MATERIAL_DB else next(iter(MATERIAL_DB))
+        names = _material_names()
+        if material not in names:
+            material = _DEFAULT_MATERIAL if _DEFAULT_MATERIAL in names else names[0]
         row = self.table.rowCount() if row is None else row
         self.table.insertRow(row)
 
         mat = QComboBox()
-        mat.addItems(MATERIAL_DB.keys())
+        mat.addItems(names)
         mat.setCurrentText(material)
+        mat.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)      # fill the cell, never widen it
+        mat.view().setMinimumWidth(mat.view().sizeHintForColumn(0) + 24)  # the open list shows whole names
+        mat.setToolTip(material)
 
         thick = QDoubleSpinBox()
         thick.setRange(0.0, 1e6)
         thick.setDecimals(3)
-        thick.setSingleStep(0.1)
+        thick.setButtonSymbols(QAbstractSpinBox.NoButtons)
         thick.setValue(thickness)
 
         units = QComboBox()
@@ -96,7 +119,11 @@ class WindowsPanel(QGroupBox):
         self.table.setCellWidget(row, 1, thick)
         self.table.setCellWidget(row, 2, units)
 
-        mat.currentTextChanged.connect(lambda _: self.valueChanged.emit())
+        def on_material(name, combo=mat):
+            combo.setToolTip(name)
+            self.valueChanged.emit()
+
+        mat.currentTextChanged.connect(on_material)
         thick.valueChanged.connect(lambda _: self.valueChanged.emit())
         units.currentIndexChanged.connect(lambda _: self.valueChanged.emit())
         self.table.selectRow(row)
@@ -136,11 +163,8 @@ class WindowsPanel(QGroupBox):
         """The windows to apply (empty when the box is unchecked)"""
         if not self.isChecked():
             return []
-        out = []
-        for row in range(self.table.rowCount()):
-            name, thickness, unit = self._row_state(row)
-            out.append(Window(deepcopy(get_material(name)), thickness, unit))
-        return out
+        return [Window(get_material(name), thickness, unit)
+                for name, thickness, unit in self.state()]
 
     def state(self) -> list[tuple[str, float, str]]:
         return [self._row_state(r) for r in range(self.table.rowCount())]
@@ -155,3 +179,30 @@ class WindowsPanel(QGroupBox):
         finally:
             self.blockSignals(False)
         self.valueChanged.emit()
+
+    # ---- session ----
+
+    def save(self, s: QSettings):
+        s.remove("windows")
+        s.setValue("windows/enabled", self.isChecked())
+        rows = self.state()
+        s.setValue("windows/count", len(rows))
+        for i, (name, thickness, unit) in enumerate(rows):
+            s.setValue(f"windows/{i}/material", name)
+            s.setValue(f"windows/{i}/thickness", thickness)
+            s.setValue(f"windows/{i}/unit", unit)
+
+    def load(self, s: QSettings):
+        n = s.value("windows/count", 0, type=int) or 0
+        rows = []
+        for i in range(n):
+            name = s.value(f"windows/{i}/material")
+            thickness = s.value(f"windows/{i}/thickness", type=float)
+            unit = s.value(f"windows/{i}/unit") or "um"
+            if name and thickness is not None:
+                rows.append((name, thickness, unit))
+        self.blockSignals(True)
+        try:
+            self.set_state(rows, s.value("windows/enabled", False, type=bool))
+        finally:
+            self.blockSignals(False)

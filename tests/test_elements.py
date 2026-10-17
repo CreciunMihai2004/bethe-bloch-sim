@@ -38,8 +38,8 @@ def test_no_formula_means_one_effective_atom():
 
 
 def test_every_shipped_material_has_a_consistent_formula():
-    from core.materials import MATERIAL_DB
-    for name in MATERIAL_DB:
+    from core.materials import MATERIAL_DB, WINDOW_MATERIAL_DB
+    for name in list(MATERIAL_DB) + list(WINDOW_MATERIAL_DB):
         m = get_material(name)
         assert m.formula, f"{name}: add a formula to materials.csv"
         z_sum = sum(z * n for z, _, n in m.composition)

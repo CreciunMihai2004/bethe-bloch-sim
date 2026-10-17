@@ -10,6 +10,7 @@ import numpy as np
 
 from PySide6.QtWidgets import QFileDialog
 
+from core.detector import AnodeLayout
 from core.simulation import TrackResult, find_intersections
 from core.units import StoppingUnit, PlotMode
 
@@ -21,6 +22,8 @@ _THEMES = {
         grid_alpha=0.3,
         cross_pen=pg.mkPen("#888888", style=QtCore.Qt.DashLine, width=1),
         label_fill=(40, 40, 40, 180),
+        anode_brushes=((90, 140, 255, 28), (255, 170, 60, 22)),
+        anode_pen=pg.mkPen("#9aa4b5", style=QtCore.Qt.DashLine, width=1),
     ),
     "light": dict(
         bg="#f5f5f5",
@@ -28,6 +31,8 @@ _THEMES = {
         grid_alpha=0.25,
         cross_pen=pg.mkPen("#666666", style=QtCore.Qt.DashLine, width=1),
         label_fill=(230, 230, 230, 200),
+        anode_brushes=((60, 110, 230, 30), (240, 140, 20, 26)),
+        anode_pen=pg.mkPen("#6b7280", style=QtCore.Qt.DashLine, width=1),
     ),
 }
 
@@ -40,6 +45,7 @@ class BraggPlot(pg.PlotWidget):
         self._unit: StoppingUnit = StoppingUnit.LINEAR_MM
         self._mass_thickness: bool = False
         self._mode        = PlotMode.DEDX
+        self._anodes: AnodeLayout | None = None
 
         # ---- crosshair ----
         self._vline = pg.InfiniteLine(angle=90, movable=False)
@@ -119,6 +125,34 @@ class BraggPlot(pg.PlotWidget):
     def set_results(self, results: List[TrackResult]):
         self._results = results
 
+    def set_anodes(self, layout: AnodeLayout | None):
+        """Anode geometry to shade behind the curves (None: no anodes)"""
+        self._anodes = layout
+
+    def _draw_anodes(self, mass_thickness: bool):
+        if self._anodes is None:
+            return
+        t = _THEMES[self._theme_name]
+        # in mass-thickness mode the bands follow the gas density of the run
+        scale = (self._results[0].rho / 10.0) if (mass_thickness and self._results) else 1.0
+        if mass_thickness and not self._results:
+            return
+        a = self._anodes
+        for (lo, hi), brush, tip in (((a.start_mm, a.boundary_mm), t["anode_brushes"][0], "Anode 1 (ΔE)"),
+                                     ((a.boundary_mm, a.end_mm), t["anode_brushes"][1], "Anode 2 (E_res)")):
+            if hi <= lo:
+                continue
+            region = pg.LinearRegionItem(values=(lo * scale, hi * scale), movable=False,
+                                         brush=pg.mkBrush(*brush), pen=pg.mkPen(None))
+            region.setZValue(-10)
+            region.setToolTip(tip)
+            self.addItem(region)
+        line = pg.InfiniteLine(pos=a.boundary_mm * scale, angle=90, movable=False, pen=t["anode_pen"],
+                               label="ΔE │ E_res",
+                               labelOpts=dict(position=0.97, color=t["fg"], anchors=[(0.5, 0), (0.5, 0)]))
+        line.setZValue(-5)
+        self.addItem(line)
+
     def redraw(self, unit: StoppingUnit, mass_thickness: bool, mode: PlotMode):
         self._unit = unit
         self._mass_thickness = mass_thickness
@@ -141,6 +175,8 @@ class BraggPlot(pg.PlotWidget):
 
         self.setLabel("bottom", x_label, units=x_units, **{"color": t["fg"]})
         self.setLabel("left", y_label, units=y_units, **{"color": t["fg"]})
+
+        self._draw_anodes(mass_thickness)
 
         try:
             for r in self._results:

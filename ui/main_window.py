@@ -1,95 +1,53 @@
 """Main application window"""
 
-from copy import deepcopy
 from typing import List
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSettings
+from PySide6.QtCore import Qt, QThread, QTimer, QSettings
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget, QCheckBox,
+    QComboBox, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
+    QScrollArea, QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
-from core.materials import MATERIAL_DB, get_material
-from core.particles import PARTICLE_DB, Particle
-from core.simulation import SimSettings, TrackResult, export_csv, export_xlsx, find_intersections
+from core.beamline import simulate_through_windows
+from core.detector import density_for_crossing
+from core.simulation import SimSettings, TrackResult, export_csv, export_xlsx
 from core.units import StoppingUnit, PlotMode
 from workers.sim_worker import SimJob, SimWorker
+from ui.panels import DetectorPanel, MaterialPanel, ParticlePanel
 from ui.plot_widget import BraggPlot
+from ui.results_view import ResultsView
 from ui.windows_panel import WindowsPanel
 
+_CONTROL_WIDTH = 380
 
-class ParticlePanel(QGroupBox):
-    """Controls for a particle"""
 
-    valueChanged = Signal()
-
-    def __init__(self, title: str, default_name: str):
-        super().__init__(title)
-
-        self.combo = QComboBox()
-        self.combo.addItems(PARTICLE_DB.keys())
-        self.combo.setCurrentText(default_name)
-
-        self.spin_z = QSpinBox()
-        self.spin_z.setRange(1, 118)
-
-        self.spin_M_u = QDoubleSpinBox()
-        self.spin_M_u.setRange(0.1, 300.0)
-        self.spin_M_u.setDecimals(3)
-        self.spin_M_u.setSuffix(" u")
-        self.spin_M_u.setSingleStep(0.1)
-
-        self.input_E0 = QDoubleSpinBox()
-        self.input_E0.setRange(0.0, 1e4)
-        self.input_E0.setDecimals(3)
-        self.input_E0.setSuffix(" MeV")
-        self.input_E0.setSingleStep(0.1)
-
-        form = QFormLayout(self)
-        form.addRow("Preset:", self.combo)
-        form.addRow("Charge z:", self.spin_z)
-        form.addRow("Mass M (u):", self.spin_M_u)
-        form.addRow("Energy E0 (MeV):", self.input_E0)
-
-        self.combo.currentTextChanged.connect(self._load_preset)
-        self.spin_z.valueChanged.connect(lambda _: self.valueChanged.emit())
-        self.spin_M_u.valueChanged.connect(lambda _: self.valueChanged.emit())
-        self.input_E0.valueChanged.connect(lambda _: self.valueChanged.emit())
-        self._load_preset(default_name)
-
-    def _load_preset(self, name: str):
-        p = PARTICLE_DB[name]
-        self.spin_z.setValue(p.z)
-        self.spin_M_u.setValue(p.M_u)
-        self.input_E0.setValue(p.E0 if p.E0 is not None else 0.0)
-        self._color = p.color
-        self.valueChanged.emit()
-
-    def particle(self) -> Particle:
-        e0 = self.input_E0.value()
-        z, M_u = self.spin_z.value(), self.spin_M_u.value()
-
-        # z or M edited away from the preset: do not label the curve with the preset's name
-        preset = PARTICLE_DB.get(self.combo.currentText())
-        name = self.combo.currentText()
-        if preset is not None and (z != preset.z or abs(M_u - preset.M_u) > 5e-4):
-            name += " (custom)"
-
-        return Particle(
-            name=name,
-            z=z,
-            M_u=M_u,
-            E0=e0 if e0 > 0 else None,
-            color=self._color,
-        )
+def _scrolling(*widgets) -> QScrollArea:
+    """A tab page: the widgets stacked at the top, scrolling if the screen is short"""
+    page = QWidget()
+    layout = QVBoxLayout(page)
+    for w in widgets:
+        layout.addWidget(w)
+    layout.addStretch(1)
+    area = QScrollArea()
+    area.setWidget(page)
+    area.setWidgetResizable(True)
+    area.setFrameShape(QScrollArea.NoFrame)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    return area
 
 
 class MainWindow(QMainWindow):
+    _SETTINGS_ORG = "BraggSim"
+    _SETTINGS_APP = "BraggCurveSimulator"
+    #   Windows : HKCU\Software\BraggSim\BraggCurveSimulator
+    #   macOS   : ~/Library/Preferences/com.BraggSim.BraggCurveSimulator.plist
+    #   Linux   : ~/.config/BraggSim/BraggCurveSimulator.ini
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Bragg Curve Simulator — Bethe-Bloch")
-        self.resize(1200, 700)
+        self.resize(1280, 760)
 
         self._results: List[TrackResult] = []
         self._thread: QThread | None = None
@@ -102,142 +60,116 @@ class MainWindow(QMainWindow):
         self._auto_run_timer.setInterval(80)
         self._auto_run_timer.timeout.connect(self._run_auto)
 
-        # ---- material box ----
-        self.mat_combo = QComboBox()
-        self.mat_combo.addItems(MATERIAL_DB.keys())
-
-        self.gas_checkbox = QCheckBox("Gas")
-
-        mat_row = QHBoxLayout()
-        mat_row.addWidget(self.mat_combo, stretch=1)
-        mat_row.addWidget(self.gas_checkbox)
-        mat_row_widget = QWidget()
-        mat_row_widget.setLayout(mat_row)
-
-        self.density_input = QDoubleSpinBox()
-        self.density_input.setRange(1e-8, 100.0)
-        self.density_input.setDecimals(8)
-        self.density_input.setSuffix(" g/cm³")
-        self.density_input.setSingleStep(0.0000005)
-        self.density_input.setValue(get_material(self.mat_combo.currentText()).rho)
-
-        self.pressure_label = QLabel("-")
-        self.pressure_label.setVisible(False)
-
-        mat_box = QGroupBox("Material")
-        mat_form = QFormLayout(mat_box)
-        mat_form.addRow("Medium:", mat_row_widget)
-        mat_form.addRow("Density:", self.density_input)
-        mat_form.addRow("Pressure:", self.pressure_label)
-
-        # ---- particles ----
+        # ---- inputs, one tab per stage of the beam's path ----
+        self.material_panel = MaterialPanel()
         self.p1_panel = ParticlePanel("Particle 1", "Hydrogen-1")
         self.p2_panel = ParticlePanel("Particle 2", "Helium-4")
-
-        # ---- windows in front of the detector ----
         self.windows_panel = WindowsPanel()
+        self.detector_panel = DetectorPanel()
 
-        # ---- display options ----
+        self.tabs = QTabWidget()
+        self.tabs.addTab(_scrolling(self.material_panel, self.p1_panel, self.p2_panel), "Setup")
+        self.tabs.addTab(_scrolling(self.windows_panel), "Beamline")
+        self.tabs.addTab(_scrolling(self.detector_panel), "Detector")
+        self.tabs.setFixedWidth(_CONTROL_WIDTH)
+
+        # ---- display options: one row above the plot ----
         self.plot_mode_combo = QComboBox()
         for m in PlotMode:
             self.plot_mode_combo.addItem(m.label, m)
-
         self.unit_combo = QComboBox()
         for u in StoppingUnit:
             self.unit_combo.addItem(u.label, u)
-
         self.xaxis_combo = QComboBox()
         self.xaxis_combo.addItem("Distance (mm)", False)
         self.xaxis_combo.addItem("Mass thickness (g/cm²)", True)
 
-        disp_box = QGroupBox("Display")
-        disp_form = QFormLayout(disp_box)
-        disp_form.addRow("Plot:",       self.plot_mode_combo)
-        disp_form.addRow("dE/dx unit:", self.unit_combo)
-        disp_form.addRow("x-axis:", self.xaxis_combo)
+        self.btn_theme = QToolButton()
+        self.btn_theme.setText("☀")
+        self.btn_theme.setToolTip("Light / dark plot")
 
-        # ---- action buttons ----
-        self.btn_theme = QPushButton("☀  Light mode")
-        self.btn_load_session = QPushButton("🗀 Load Last Session")
-        self.btn_export_csv = QPushButton("Export CSV")
-        self.btn_export_xlsx = QPushButton("Export Excel")
-        self.btn_export_png = QPushButton("Export PNG")
+        self.btn_export = QToolButton()
+        self.btn_export.setText("Export")
+        self.btn_export.setPopupMode(QToolButton.InstantPopup)
 
-        self.btn_export_csv.setEnabled(False)
-        self.btn_export_xlsx.setEnabled(False)
-        self.btn_export_png.setEnabled(False)
-
-        btn_row = QHBoxLayout()
-        btn_row.addWidget(self.btn_export_csv)
-        btn_row.addWidget(self.btn_export_xlsx)
-        btn_row.addWidget(self.btn_export_png)
-
-        # ---- left control column ----
-        control = QVBoxLayout()
-        control.addWidget(mat_box)
-        control.addWidget(self.p1_panel)
-        control.addWidget(self.p2_panel)
-        control.addWidget(self.windows_panel)
-        control.addWidget(disp_box)
-        control.addWidget(self.btn_theme)
-        control.addWidget(self.btn_load_session)
-        control.addLayout(btn_row)
-        control.addStretch(1)
-
-        control_widget = QWidget()
-        control_widget.setLayout(control)
-
-        # the column is taller than a small screen once windows are added: let it scroll
-        control_scroll = QScrollArea()
-        control_scroll.setWidget(control_widget)
-        control_scroll.setWidgetResizable(True)
-        control_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        control_scroll.setFixedWidth(340)
+        display_row = QHBoxLayout()
+        display_row.setContentsMargins(0, 0, 0, 0)
+        for label, w in (("Plot", self.plot_mode_combo), ("dE/dx", self.unit_combo),
+                         ("x", self.xaxis_combo)):
+            display_row.addWidget(QLabel(label))
+            display_row.addWidget(w)
+            display_row.addSpacing(8)
+        display_row.addStretch(1)
+        display_row.addWidget(self.btn_export)
+        display_row.addWidget(self.btn_theme)
 
         # ---- plot + results ----
         self.plot = BraggPlot()
-
-        self.results_label = QLabel("Ready.")
-        self.results_label.setWordWrap(True)
-        self.results_label.setTextFormat(Qt.RichText)
+        self.results = ResultsView()
 
         right = QVBoxLayout()
+        right.addLayout(display_row)
         right.addWidget(self.plot, stretch=1)
-        right.addWidget(self.results_label)
+        right.addWidget(self.results)
         right_widget = QWidget()
         right_widget.setLayout(right)
 
         root = QHBoxLayout()
-        root.addWidget(control_scroll)
+        root.addWidget(self.tabs)
         root.addWidget(right_widget, stretch=1)
         container = QWidget()
         container.setLayout(root)
         self.setCentralWidget(container)
 
+        self._build_menus()
         self.statusBar().showMessage("Ready")
 
         # ---- signal connections ----
-        self.mat_combo.currentTextChanged.connect(self._on_material_changed)
-        self.density_input.valueChanged.connect(self.schedule_auto_run)
-        self.density_input.valueChanged.connect(self._update_pressure_display)
-        self.gas_checkbox.toggled.connect(self._on_gas_toggled)
-
-        self.p1_panel.valueChanged.connect(self.schedule_auto_run)
-        self.p2_panel.valueChanged.connect(self.schedule_auto_run)
-        self.windows_panel.valueChanged.connect(self.schedule_auto_run)
+        for panel in (self.material_panel, self.p1_panel, self.p2_panel, self.windows_panel):
+            panel.valueChanged.connect(self.schedule_auto_run)
+        self.detector_panel.layoutChanged.connect(self.on_display_changed)
+        self.detector_panel.findDensityRequested.connect(self.place_crossing_on_boundary)
 
         self.plot_mode_combo.currentIndexChanged.connect(self.on_display_changed)
         self.unit_combo.currentIndexChanged.connect(self.on_display_changed)
         self.xaxis_combo.currentIndexChanged.connect(self.on_display_changed)
-
         self.btn_theme.clicked.connect(self._toggle_theme)
-        self.btn_load_session.clicked.connect(self._load_settings)
-        self.btn_export_csv.clicked.connect(self._on_export_csv)
-        self.btn_export_xlsx.clicked.connect(self._on_export_xlsx)
-        self.btn_export_png.clicked.connect(self._on_export_png)
 
         self._sync_controls()
-        self._update_pressure_display()
+        self._set_export_enabled(False)
+
+    def _build_menus(self):
+        self.act_load_session = QAction("Load last session", self)
+        self.act_load_session.setShortcut(QKeySequence("Ctrl+L"))
+        self.act_export_csv = QAction("Export CSV…", self)
+        self.act_export_xlsx = QAction("Export Excel…", self)
+        self.act_export_png = QAction("Export plot as PNG…", self)
+        act_quit = QAction("Quit", self)
+        act_quit.setShortcut(QKeySequence.Quit)
+
+        self.act_load_session.triggered.connect(self._load_settings)
+        self.act_export_csv.triggered.connect(self._on_export_csv)
+        self.act_export_xlsx.triggered.connect(self._on_export_xlsx)
+        self.act_export_png.triggered.connect(self._on_export_png)
+        act_quit.triggered.connect(self.close)
+
+        file_menu = self.menuBar().addMenu("&File")
+        file_menu.addAction(self.act_load_session)
+        file_menu.addSeparator()
+        for a in (self.act_export_csv, self.act_export_xlsx, self.act_export_png):
+            file_menu.addAction(a)
+        file_menu.addSeparator()
+        file_menu.addAction(act_quit)
+
+        export_menu = QMenu(self)
+        for a in (self.act_export_csv, self.act_export_xlsx, self.act_export_png):
+            export_menu.addAction(a)
+        self.btn_export.setMenu(export_menu)
+
+    def _set_export_enabled(self, on: bool):
+        for a in (self.act_export_csv, self.act_export_xlsx, self.act_export_png):
+            a.setEnabled(on)
+        self.btn_export.setEnabled(on)
 
     # ---- helpers ----
 
@@ -247,56 +179,15 @@ class MainWindow(QMainWindow):
     def _current_mass_thickness(self) -> bool:
         return self.xaxis_combo.currentData()
 
-    def _selected_material(self):
-        material = deepcopy(get_material(self.mat_combo.currentText()))
-        material.rho = self.density_input.value()
-        return material
-
     def _current_plot_mode(self) -> PlotMode:
         return self.plot_mode_combo.currentData()
 
-    # ---- material change ----
-
-    def _on_material_changed(self, name: str):
-        mat = get_material(name)
-        self.density_input.blockSignals(True)
-        self.density_input.setValue(mat.rho)
-        self.density_input.blockSignals(False)
-        self._update_pressure_display()
-        self.schedule_auto_run()
-
-    _P0_ATM = 1.0
-
-    def _update_pressure_display(self, *_args):
-        if not self.gas_checkbox.isChecked():
-            self.pressure_label.setVisible(False)
-            return
-
-        rho0 = get_material(self.mat_combo.currentText()).rho
-        rho = self.density_input.value()
-
-        if rho0 <= 0:
-            self.pressure_label.setText("—")
-            self.pressure_label.setVisible(True)
-            return
-
-        pressure_atm = self._P0_ATM * (rho / rho0)
-        self.pressure_label.setText(
-            f"{pressure_atm * 1013.25:.2f} mbar"
-        )
-        self.pressure_label.setVisible(True)
-
-    def _on_gas_toggled(self, _checked: bool):
-        self._update_pressure_display()
-
-    # ---- theme toggle ----
+    def _selected_material(self):
+        return self.material_panel.material()
 
     def _toggle_theme(self):
-        new_theme = self.plot.toggle_theme()
-        if new_theme == "dark":
-            self.btn_theme.setText("☀  Light mode")
-        else:
-            self.btn_theme.setText("☽  Dark mode")
+        dark = self.plot.toggle_theme() == "dark"
+        self.btn_theme.setText("☀" if dark else "☽")
 
     # ---- simulation scheduling ----
 
@@ -306,34 +197,25 @@ class MainWindow(QMainWindow):
     def _run_auto(self):
         self._start_simulation(show_warnings=False)
 
+    def _warn(self, show: bool, title: str, msg: str):
+        if show:
+            QMessageBox.warning(self, title, msg)
+        else:
+            self.statusBar().showMessage(msg, 6000)
+
     def _build_job(self, show_warnings: bool) -> SimJob | None:
-        p1 = self.p1_panel.particle()
-        p2 = self.p2_panel.particle()
-
-        valid = [p for p in (p1, p2) if p.E0 is not None and p.E0 > 0]
+        valid = [p for p in (self.p1_panel.particle(), self.p2_panel.particle())
+                 if p.E0 is not None and p.E0 > 0]
         if not valid:
-            msg = "At least one particle needs a positive energy value."
-            if show_warnings:
-                QMessageBox.warning(self, "Invalid input", msg)
-            else:
-                self.statusBar().showMessage("Enter a positive E0 for at least one particle.")
+            self._warn(show_warnings, "Invalid input", "Enter a positive E₀ for at least one particle.")
             return None
-
         try:
             windows = self.windows_panel.windows()
         except ValueError as e:
-            if show_warnings:
-                QMessageBox.warning(self, "Invalid window", str(e))
-            else:
-                self.statusBar().showMessage(f"Window: {e}")
+            self._warn(show_warnings, "Invalid window", f"Window: {e}")
             return None
-
-        return SimJob(
-            material=self._selected_material(),
-            particles=valid,
-            settings=SimSettings(),
-            windows=windows,
-        )
+        return SimJob(material=self._selected_material(), particles=valid,
+                      settings=SimSettings(), windows=windows)
 
     def _start_simulation(self, show_warnings: bool):
         if self._thread is not None and self._thread.isRunning():
@@ -346,9 +228,7 @@ class MainWindow(QMainWindow):
 
         self._rerun_requested = False
         self._current_run_shows_errors = show_warnings
-        self.btn_export_csv.setEnabled(False)
-        self.btn_export_xlsx.setEnabled(False)
-        self.btn_export_png.setEnabled(False)
+        self._set_export_enabled(False)
 
         self._thread = QThread()
         self._worker = SimWorker(job)
@@ -372,8 +252,8 @@ class MainWindow(QMainWindow):
     def on_sim_done(self, results: List[TrackResult]):
         self._results = results
         self.plot.set_results(results)
-        self.redraw()
-        self._refresh_results_label()
+        self.on_display_changed()
+        self._set_export_enabled(bool(results))
         self.statusBar().showMessage("Done", 3000)
 
     def _on_sim_progress(self, percent: int):
@@ -388,25 +268,56 @@ class MainWindow(QMainWindow):
     def _on_thread_finished(self):
         self._thread = None
         self._worker = None
-        have = bool(self._results)
-        self.btn_export_csv.setEnabled(have)
-        self.btn_export_xlsx.setEnabled(have)
-        self.btn_export_png.setEnabled(have)
+        self._set_export_enabled(bool(self._results))
         if self._rerun_requested:
             self._rerun_requested = False
             self._auto_run_timer.start(0)
 
+    # ---- pressure finder ----
+
+    def place_crossing_on_boundary(self):
+        """Set the gas density so the two dE/dx curves cross on the anode boundary"""
+        layout = self.detector_panel.layout_or_none()
+        job = self._build_job(show_warnings=True)
+        if layout is None or job is None:
+            return
+        if len(job.particles) < 2:
+            self._warn(True, "Pressure finder", "Both particles need a positive E₀.")
+            return
+
+        def run(mat, part):
+            return simulate_through_windows(mat, part, job.windows, job.settings)
+
+        try:
+            rho = density_for_crossing(job.material, job.particles, layout.boundary_mm, run)
+        except Exception as e:                       # bad input reaches here as a simulation error
+            self._warn(True, "Pressure finder", str(e))
+            return
+        if rho is None:
+            self._warn(True, "Pressure finder",
+                       "The dE/dx curves of the two particles do not cross, so no density "
+                       "puts a crossing on the anode boundary.")
+            return
+        self.material_panel.set_density(rho)
+        msg = f"Density set to {rho:.4g} g/cm³"
+        if self.material_panel.is_gas():
+            msg += f" ({self.material_panel.pressure_mbar():.3f} mbar)"
+        self.statusBar().showMessage(msg + ": crossing on the anode boundary.", 8000)
+
     # ---- display-only refresh ----
 
     def _sync_controls(self):
-        self.unit_combo.setEnabled(
-            self._current_plot_mode() is PlotMode.DEDX
-        )
+        self.unit_combo.setEnabled(self._current_plot_mode() is PlotMode.DEDX)
 
-    def on_display_changed(self):
+    def on_display_changed(self, *_args):
+        self._sync_controls()
+        layout = self.detector_panel.layout_or_none()
+        self.plot.set_anodes(layout)
+        self.redraw()
         if self._results:
-            self.redraw()
-            self._refresh_results_label()
+            self.results.update_results(self._results, self._current_unit(),
+                                        self._current_plot_mode(),
+                                        self._current_mass_thickness(), layout)
 
     def redraw(self):
         self.plot.redraw(
@@ -415,106 +326,19 @@ class MainWindow(QMainWindow):
             self._current_plot_mode(),
         )
 
-    # the model-limit note is only worth showing when a noticeable share of the energy is untracked
-    _UNSPENT_WARN_FRACTION = 0.02
-
-    def _track_warnings(self, r: TrackResult) -> List[str]:
-        """Warning lines (rich text) for a track whose range is not the whole story"""
-        amber = "<span style='color:#e8a33d'>⚠ {}</span>"
-        if r.stop_reason == "window":
-            w = r.windows[-1]
-            return [amber.format(
-                f"{r.name}: stops inside window {len(r.windows)} ({w.label}) "
-                f"and never reaches the detector.")]
-        if r.stop_reason in ("x_stop", "max_steps"):
-            why = ("the depth limit was reached" if r.stop_reason == "x_stop"
-                   else "the step limit was reached")
-            return [amber.format(
-                f"{r.name}: track cut — {why} with {r.E[-1]:.3f} MeV left, "
-                f"so the range above is a lower bound.")]
-        if r.stop_reason == "model_limit" and r.unspent_fraction > self._UNSPENT_WARN_FRACTION:
-            return [amber.format(
-                f"{r.name}: tracking stops at {r.E[-1] * 1000:.0f} keV "
-                f"({r.unspent_fraction:.0%} of E₀), where the Bethe-Bloch model is not valid "
-                f"any more. The slowing-down below that is not included in the range.")]
-        return []
-
-    @staticmethod
-    def _windows_line(r: TrackResult) -> str:
-        """beam energy -> each window's loss -> energy entering the detector"""
-        steps = [f"{r.E_beam:.4g} MeV"]
-        for w in r.windows:
-            steps.append(f"{w.label} (−{w.loss * 1000:.1f} keV)")
-        if r.stop_reason != "window":
-            steps.append(f"<b>{r.E[0]:.4g} MeV</b> into the detector")
-        return "&nbsp;&nbsp;windows: " + " → ".join(steps)
-
-    def _refresh_results_label(self):
-        unit = self._current_unit()
-        mode = self._current_plot_mode()
-        mass_thickness = self._current_mass_thickness()
-        lines = []
-        for r in self._results:
-            if mode is PlotMode.DEDX:
-                extra = f"peak dE/dx = {r.peak_dEdx(unit):.4f} {unit.label}"
-            else:
-                extra = f"E₀ = {r.E[0]:.3f} MeV"
-            lines.append(
-                f"<b>{r.name}</b>: range = {r.range_mm:.4f} mm "
-                f"({r.range_mass:.4g} g/cm²), {extra}"
-            )
-            if r.windows:
-                lines.append(self._windows_line(r))
-            lines.extend(self._track_warnings(r))
-
-        if mode is PlotMode.DEDX and len(self._results) >= 2:
-            pts = find_intersections(self._results[0], self._results[1], unit, mass_thickness)
-            if pts:
-                x_unit = "g/cm²" if mass_thickness else "mm"
-                lines.append("<b>Intersection coordinates: </b>")
-                for idx, (ix, iy) in enumerate(pts, start=1):
-                    lines.append(f"x = {ix:.4f} {x_unit}, y = {iy:.4f} {unit.label}")
-
-        self.results_label.setText("<br>".join(lines))
-
-
     # ---- session save + load ----
-    #   Windows : HKCU\Software\BraggSim\BraggCurveSimulator
-    #   macOS   : ~/Library/Preferences/com.BraggSim.BraggCurveSimulator.plist
-    #   Linux   : ~/.config/BraggSim/BraggCurveSimulator.ini
-
-    _SETTINGS_ORG = "BraggSim"
-    _SETTINGS_APP = "BraggCurveSimulator"
 
     def _save_settings(self):
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
-
-        # material
-        s.setValue("material/name",  self.mat_combo.currentText())
-        s.setValue("material/density",  self.density_input.value())
-        s.setValue("material/is_gas", self.gas_checkbox.isChecked())
-
-        # particles
-        for i, panel in enumerate([self.p1_panel, self.p2_panel], 1):
-            g = f"particle{i}"
-            s.setValue(f"{g}/preset", panel.combo.currentText())
-            s.setValue(f"{g}/z", panel.spin_z.value())
-            s.setValue(f"{g}/M_u", panel.spin_M_u.value())
-            s.setValue(f"{g}/E0", panel.input_E0.value())
-
-        # display
+        self.material_panel.save(s)
+        self.p1_panel.save(s, "particle1")
+        self.p2_panel.save(s, "particle2")
+        self.windows_panel.save(s)
+        self.detector_panel.save(s)
         s.setValue("display/unit", self.unit_combo.currentIndex())
         s.setValue("display/xaxis", self.xaxis_combo.currentIndex())
         s.setValue("display/mode", self.plot_mode_combo.currentIndex())
-
-        # windows
-        s.setValue("windows/enabled", self.windows_panel.isChecked())
-        rows = self.windows_panel.state()
-        s.setValue("windows/count", len(rows))
-        for i, (name, thickness, unit) in enumerate(rows):
-            s.setValue(f"windows/{i}/material", name)
-            s.setValue(f"windows/{i}/thickness", thickness)
-            s.setValue(f"windows/{i}/unit", unit)
+        s.setValue("ui/tab", self.tabs.currentIndex())
 
     def _load_settings(self):
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
@@ -524,83 +348,25 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No saved session found.", 4000)
             return
 
-        # material
-        mat_name = s.value("material/name")
-        if mat_name and mat_name in MATERIAL_DB:
-            self.mat_combo.blockSignals(True)
-            self.mat_combo.setCurrentText(mat_name)
-            self.mat_combo.blockSignals(False)
+        self.material_panel.load(s)
+        self.p1_panel.load(s, "particle1")
+        self.p2_panel.load(s, "particle2")
+        self.windows_panel.load(s)
+        self.detector_panel.load(s)
 
-        density = s.value("material/density", type=float)
-        if density and density > 0:
-            self.density_input.blockSignals(True)
-            self.density_input.setValue(density)
-            self.density_input.blockSignals(False)
-
-        is_gas = s.value("material/is_gas", type=bool)
-        self.gas_checkbox.blockSignals(True)
-        self.gas_checkbox.setChecked(bool(is_gas))
-        self.gas_checkbox.blockSignals(False)
-
-        # particles
-        for i, panel in enumerate([self.p1_panel, self.p2_panel], 1):
-            g = f"particle{i}"
-
-            panel.blockSignals(True)
-            try:
-                preset = s.value(f"{g}/preset")
-                if preset and preset in PARTICLE_DB:
-                    panel.combo.blockSignals(True)
-                    panel.combo.setCurrentText(preset)
-                    panel.combo.blockSignals(False)
-
-                    panel._load_preset(preset)
-
-                z = s.value(f"{g}/z", type=int)
-                if z:
-                    panel.spin_z.setValue(z)
-
-                M_u = s.value(f"{g}/M_u", type=float)
-                if M_u and M_u > 0:
-                    panel.spin_M_u.setValue(M_u)
-
-                E0 = s.value(f"{g}/E0", type=float)
-                if E0 and E0 > 0:
-                    panel.input_E0.setValue(E0)
-
-            finally:
-                panel.blockSignals(False)
-
-        # display
-        for combo, key in [
-            (self.unit_combo, "display/unit"),
-            (self.xaxis_combo, "display/xaxis"),
-            (self.plot_mode_combo, "display/mode")
-        ]:
+        for combo, key in ((self.unit_combo, "display/unit"),
+                           (self.xaxis_combo, "display/xaxis"),
+                           (self.plot_mode_combo, "display/mode")):
             idx = s.value(key, type=int)
             if idx is not None and 0 <= idx < combo.count():
                 combo.blockSignals(True)
                 combo.setCurrentIndex(idx)
                 combo.blockSignals(False)
+        tab = s.value("ui/tab", type=int)
+        if tab is not None and 0 <= tab < self.tabs.count():
+            self.tabs.setCurrentIndex(tab)
 
-        # windows
-        n = s.value("windows/count", 0, type=int) or 0
-        rows = []
-        for i in range(n):
-            name = s.value(f"windows/{i}/material")
-            thickness = s.value(f"windows/{i}/thickness", type=float)
-            unit = s.value(f"windows/{i}/unit") or "um"
-            if name and thickness is not None:
-                rows.append((name, thickness, unit))
-        self.windows_panel.blockSignals(True)
-        try:
-            self.windows_panel.set_state(rows, s.value("windows/enabled", False, type=bool))
-        finally:
-            self.windows_panel.blockSignals(False)
-
-        # sync
-        self._sync_controls()
-        self._update_pressure_display()
+        self.on_display_changed()
         self.schedule_auto_run()
 
     def closeEvent(self, event):
@@ -619,7 +385,6 @@ class MainWindow(QMainWindow):
             pass    # the thread object was already deleted: nothing to stop
 
         super().closeEvent(event)
-
 
     # ---- export ----
 
@@ -645,7 +410,8 @@ class MainWindow(QMainWindow):
         if not path:
             return
         export_xlsx(self._results, path,
-                    self._current_unit(), self._current_mass_thickness())
+                    self._current_unit(), self._current_mass_thickness(),
+                    anodes=self.detector_panel.layout_or_none())
         self.statusBar().showMessage(f"Saved: {path}", 4000)
 
     def _on_export_png(self):

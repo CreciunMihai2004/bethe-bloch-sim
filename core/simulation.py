@@ -306,7 +306,8 @@ _STOP_TEXT = {
 
 
 def export_xlsx(results: List[TrackResult], path: str,
-                unit: StoppingUnit, mass_thickness: bool = False) -> None:
+                unit: StoppingUnit, mass_thickness: bool = False,
+                anodes=None) -> None:
     """
     Sheet "Bragg curves"
         One shared x-column, then alternating energy / dE/dx columns per
@@ -315,26 +316,38 @@ def export_xlsx(results: List[TrackResult], path: str,
 
     Sheet "Metadata"
         Entry/final energy, why the track ended, range, peak dE/dx and
-        unit information for each particle
+        unit information for each particle; with anodes (core.detector.AnodeLayout)
+        also the energy deposited in each anode
     """
     import openpyxl
 
     df = _build_export_df(results, unit, mass_thickness, unit_in_name=True)
 
-    df_meta = pd.DataFrame([{
-        "Particle": r.name,
-        "Beam energy (MeV)": float(f"{(r.E[0] if r.E_beam is None else r.E_beam):.6g}"),
-        "Lost in windows (MeV)": float(f"{r.window_loss:.6g}"),
-        "Entry energy (MeV)": float(f"{r.E[0]:.6g}"),
-        "Final energy (MeV)": float(f"{r.E[-1]:.6g}"),
-        "Track end": _STOP_TEXT[r.stop_reason],
-        "Range (mm)": round(r.range_mm, 2),
-        # significant digits, not decimals: gas ranges are ~1e-4 g/cm²
-        "Range (g/cm²)": float(f"{r.range_mass:.6g}"),
-        f"Peak dE/dx ({unit.label})": round(r.peak_dEdx(unit), 5),
-        "dE/dx unit": unit.label,
-        "x-axis": "Mass thickness (g/cm²)" if mass_thickness else "Distance (mm)",
-    } for r in results])
+    def meta(r: TrackResult) -> dict:
+        row = {
+            "Particle": r.name,
+            "Beam energy (MeV)": float(f"{(r.E[0] if r.E_beam is None else r.E_beam):.6g}"),
+            "Lost in windows (MeV)": float(f"{r.window_loss:.6g}"),
+            "Entry energy (MeV)": float(f"{r.E[0]:.6g}"),
+            "Final energy (MeV)": float(f"{r.E[-1]:.6g}"),
+            "Track end": _STOP_TEXT[r.stop_reason],
+            "Range (mm)": round(r.range_mm, 2),
+            # significant digits, not decimals: gas ranges are ~1e-4 g/cm²
+            "Range (g/cm²)": float(f"{r.range_mass:.6g}"),
+            f"Peak dE/dx ({unit.label})": round(r.peak_dEdx(unit), 5),
+            "dE/dx unit": unit.label,
+            "x-axis": "Mass thickness (g/cm²)" if mass_thickness else "Distance (mm)",
+        }
+        if anodes is not None:
+            from .detector import anode_signals
+            s = anode_signals(r, anodes)
+            row.update({"Anode 1 dE (MeV)": float(f"{s.dE:.6g}"),
+                        "Anode 2 E_res (MeV)": float(f"{s.E_res:.6g}"),
+                        "Left after anode 2 (MeV)": float(f"{s.escaped:.6g}"),
+                        "Anodes (gap / 1 / 2, mm)": f"{anodes.gap_mm:g} / {anodes.anode1_mm:g} / {anodes.anode2_mm:g}"})
+        return row
+
+    df_meta = pd.DataFrame([meta(r) for r in results])
 
     wb = openpyxl.Workbook()
     ws_data = wb.active

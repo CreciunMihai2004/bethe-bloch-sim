@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import colorsys
 import itertools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -76,8 +76,9 @@ PARTICLE_DB: dict[str, Particle] = _load_particle_db()
 
 
 def get_particle(name: str) -> Particle:
+    """A copy of the named particle: callers may set E0 without touching the database"""
     try:
-        return PARTICLE_DB[name]
+        return replace(PARTICLE_DB[name])
     except KeyError:
         raise KeyError(
             f"Particle '{name}' not found.\n"
