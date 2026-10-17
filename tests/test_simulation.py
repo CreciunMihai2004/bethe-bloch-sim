@@ -82,8 +82,9 @@ def test_range_regression_and_sanity_against_srim(be10, b10, isobutane_low_p):
     """
     be = simulate(isobutane_low_p, be10, SimSettings()).range_mm
     b = simulate(isobutane_low_p, b10, SimSettings()).range_mm
-    assert be == pytest.approx(385.07, rel=5e-3)
-    assert b == pytest.approx(278.70, rel=5e-3)
+    # I of isobutane from Bragg additivity: 47.85 eV (it was ICRU 49's 48.3 eV: 385.07 / 278.70 mm)
+    assert be == pytest.approx(382.63, rel=5e-3)
+    assert b == pytest.approx(276.96, rel=5e-3)
     assert 368.3 <= be <= 1.10 * 368.3
     assert 242.55 <= b <= 1.20 * 242.55          # B-10 is the weaker case: see docs/PROGRESS.md
 

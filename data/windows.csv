@@ -1,11 +1,11 @@
 # Window and foil materials (shown in the Beamline tab, not in the detector medium list)
 #
-# Same columns as materials.csv. I values: NIST ESTAR; rho: bulk density (g/cm^3).
-# Z and A are per formula unit and must match the formula.
+# Same columns as materials.csv: with a formula, Z, A and I_eV are computed (leave them blank)
+# rho: bulk density (g/cm^3)
 #
 name,Z,A,I_eV,rho,X0,X1,a_stern,m_stern,formula
 #
-Mylar (C10H8O4),100,192.17,78.7,1.40,,,,,C10H8O4
-Kapton (C22H10N2O5),196,382.33,79.6,1.42,,,,,C22H10N2O5
-Polypropylene (C3H6),24,42.081,56.5,0.90,,,,,C3H6
-Carbon (amorphous),6,12.011,78.0,2.0,,,,,C
+Mylar (C10H8O4),,,,1.40,,,,,C10H8O4
+Kapton (C22H10N2O5),,,,1.42,,,,,C22H10N2O5
+Polypropylene (C3H6),,,,0.90,,,,,C3H6
+Carbon (amorphous),,,,2.0,,,,,C

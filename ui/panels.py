@@ -7,12 +7,10 @@ from PySide6.QtWidgets import (
 )
 
 from core.detector import AnodeLayout
-from core.materials import MATERIAL_DB, Material, get_material
+from core.materials import GAS_MAX_DENSITY, MATERIAL_DB, Material, get_material
 from core.particles import PARTICLE_DB, Particle
 from ui.widgets import ScientificSpinBox
 
-# a medium whose reference (STP) density is below this is a gas: show its pressure
-_GAS_MAX_DENSITY = 0.01     # g/cm^3
 
 
 def _spin(lo, hi, decimals, step, suffix="") -> QDoubleSpinBox:
@@ -56,8 +54,9 @@ class MaterialPanel(QGroupBox):
         return get_material(self.combo.currentText())
 
     def _on_material_changed(self, _name: str, emit: bool = True):
+        ref = self._reference()
         self.density.blockSignals(True)
-        self.density.setValue(self._reference().rho)
+        self.density.setValue(ref.rho)
         self.density.blockSignals(False)
         self._update_pressure()
         if emit:
@@ -68,7 +67,7 @@ class MaterialPanel(QGroupBox):
         self.valueChanged.emit()
 
     def is_gas(self) -> bool:
-        return self._reference().rho < _GAS_MAX_DENSITY
+        return self._reference().rho < GAS_MAX_DENSITY
 
     def pressure_mbar(self) -> float:
         rho0 = self._reference().rho
