@@ -44,7 +44,6 @@ class Material:
 
     @property
     def composition(self) -> tuple[tuple[float, float, float], ...]:
-        """(Z, A, atoms per formula unit) for every element; one effective atom if there is no formula"""
         if self.formula.strip():
             return parse_formula(self.formula)
         return ((self.Z, self.A, 1.0),)
@@ -105,10 +104,6 @@ WINDOW_MATERIAL_DB: dict[str, Material] = _load_window_db()
 
 
 def get_material(name: str) -> Material:
-    """
-    A copy of the named material (detector media first, then window materials):
-    callers may change it, e.g. set the density, without touching the database
-    """
     for db in (MATERIAL_DB, WINDOW_MATERIAL_DB):
         if name in db:
             return replace(db[name])
@@ -119,7 +114,6 @@ def get_material(name: str) -> Material:
 
 
 def reload() -> None:
-    """Re-read the CSV files and refresh the databases in place (other modules hold a reference to them)"""
     for db, fresh in ((MATERIAL_DB, _load_material_db()), (WINDOW_MATERIAL_DB, _load_window_db())):
         db.clear()
         db.update(fresh)

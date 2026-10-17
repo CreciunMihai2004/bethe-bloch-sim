@@ -9,7 +9,6 @@ from typing import Callable, Dict, Iterable, TypeVar
 T = TypeVar("T")
 
 def get_base_dir() -> Path:
-    """The program folder: next to the .exe when frozen (PyInstaller), else the project root"""
     if getattr(sys, 'frozen', False):
         return Path(sys.executable).parent
     return Path(__file__).resolve().parent.parent

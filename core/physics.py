@@ -39,7 +39,7 @@ def zbl_reduced_energy(E_keV, Z1: float, Z2: float, M1: float, M2: float):
 
 def zbl_reduced_stopping(eps):
     """
-    ZBL universal reduced nuclear stopping s_n(eps)  (works on scalars and arrays)
+    ZBL universal reduced nuclear stopping s_n(eps)
     """
     if np.ndim(eps) == 0:
         e = float(eps)
@@ -88,7 +88,7 @@ def bethe_stopping(mat: Material, part: Particle, E_kin):
     """
     E = np.asarray(E_kin, dtype=float)
     live = E > 1e-6
-    Es = np.where(live, E, 1.0)         # safe value in dead slots, zeroed at the end
+    Es = np.where(live, E, 1.0)
 
     M_part = part.M
 
@@ -139,7 +139,6 @@ def _matching_point(mat: Material, part: Particle) -> tuple[float, float]:
     valid = S > 0
     slope = np.full(E.shape, np.inf)
     slope[1:] = np.diff(np.log(np.where(valid, S, np.nan))) / np.diff(np.log(E))
-    # first valid point (going up in energy) where the curve is no steeper than the law
     flat = np.flatnonzero(valid & (slope <= _LS_EXPONENT))
     found = (float(E[flat[0]]), float(S[flat[0]])) if flat.size else (0.0, 0.0)
 
@@ -154,11 +153,6 @@ def dEdx_components(mat: Material, part: Particle, E_kin):
     Mass stopping power split into its two parts (MeV cm^2 / g):
 
         (electronic, nuclear)
-
-    Electronic: Bethe-Bloch above E_m, a velocity-proportional law (S ~ sqrt(E)) matched to
-    it in value and slope below (see _matching_point), so it goes to zero with the energy.
-    Nuclear: ZBL, summed over the elements of the target. E_kin may be a float or an array
-    of energies (MeV).
     """
     E = np.asarray(E_kin, dtype=float)
     live = E > 1e-6

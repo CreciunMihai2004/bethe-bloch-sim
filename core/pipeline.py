@@ -1,7 +1,5 @@
 """
-One simulation run: beam -> windows -> detector, for every particle
-
-A run takes milliseconds, so the UI calls run_job directly (no worker thread).
+One simulation run: beam -> windows -> detector
 """
 
 from __future__ import annotations

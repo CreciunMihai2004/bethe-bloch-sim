@@ -83,7 +83,7 @@ def pass_windows(part: Particle, E_beam: float, windows: Sequence[Window],
                  sigma_beam: float = 0.0, straggling: bool = True) -> List[WindowPassage]:
     """
     Energy (and its 1-sigma spread) before and after every window. Stops early if the
-    particle comes to rest in one (that window is the last entry, with E_out = 0)
+    particle comes to rest in one.
     """
     passages: List[WindowPassage] = []
     E, var = float(E_beam), float(sigma_beam) ** 2

@@ -29,9 +29,6 @@ _TOKEN = re.compile(r"([A-Z][a-z]?)(\d*\.?\d*)")
 def parse_formula(formula: str) -> tuple[tuple[int, float, float], ...]:
     """
     "C4H10" -> ((1, 1.008, 10.0), (6, 12.011, 4.0))   i.e. (Z, A, atoms per formula unit)
-
-    Plain formulas only: element symbols with optional counts, no brackets
-    (write "C2H6" rather than "(CH3)2"). Repeated elements are merged.
     """
     text = formula.strip()
     if not text:

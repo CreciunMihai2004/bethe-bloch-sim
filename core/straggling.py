@@ -37,7 +37,7 @@ _BOHR = K * ME_C2      # 4 pi e^4 N_A in MeV^2 cm^2 / mol
 
 def _ls_switch() -> float:
     """chi where L(chi)/2 first reaches 1 (L is a fit for small chi only: it turns over later)"""
-    # with s = sqrt(chi):  -0.016 s^3 + 1.36 s - 2 = 0, smallest positive root
+    # with s = sqrt(chi):  -0.016 s^3 + 1.36 s - 2 = 0
     s = np.roots([-0.016, 0.0, 1.36, -2.0])
     s = min(r.real for r in s if abs(r.imag) < 1e-12 and r.real > 0)
     return float(s * s)

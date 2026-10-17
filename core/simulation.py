@@ -110,8 +110,7 @@ class TrackResult:
 def _locate_model_limit(mat: Material, part: Particle, hi: float, lo: float) -> float:
     """
     Lowest energy in [lo, hi] where electronic stopping is still valid, given that
-    it is valid at hi and not at lo (three vectorized sweeps of 101 points each,
-    so the bracket shrinks by 100x per sweep)
+    it is valid at hi and not at lo
     """
     for _ in range(3):
         E = np.linspace(hi, lo, 101)
@@ -159,14 +158,13 @@ def simulate(mat: Material, part: Particle, settings: SimSettings) -> TrackResul
     elec, nuc = dEdx_components(mat, part, E)
     S = elec + nuc
 
-    # the track ends at the first grid point where Bethe-Bloch is not valid any more
     stop_reason = "stopped"
     invalid = np.flatnonzero(elec <= 0)
     if invalid.size:
         cut = int(invalid[0])
         if cut == 0:
             return result([x_start_m], [E0], [nothing], "model_limit")
-        # S is small at the limit, so a tail of even a fraction of a grid step matters:
+        # S is small at the limit
         # end the track at the limit itself, not at the last grid point above it
         E_lim = _locate_model_limit(mat, part, hi=E[cut - 1], lo=E[cut])
         S_lim = sum(dEdx_components(mat, part, E_lim))
@@ -180,7 +178,7 @@ def simulate(mat: Material, part: Particle, settings: SimSettings) -> TrackResul
     seg = 0.5 * (f[1:] + f[:-1]) * (lnE[:-1] - lnE[1:])
     x = x_start_m + np.concatenate(([0.0], np.cumsum(seg)))
 
-    # the particle reaches the energy cutoff: take it on to rest
+    # the particle reaches the energy cutoff
     if stop_reason == "stopped":
         x = np.append(x, x[-1] + 2.0 * E[-1] / S[-1])
         E = np.append(E, 0.0)
@@ -241,6 +239,6 @@ def curve_crossings(xa: np.ndarray, ya: np.ndarray,
 def find_intersections(a: TrackResult, b: TrackResult,
                        unit: StoppingUnit,
                        mass_thickness: bool = False) -> List[tuple]:
-    """Crossings of the dE/dx curves of two tracks, in the displayed units"""
+    """Crossings of the dE/dx curves of two tracks"""
     return curve_crossings(a.x_in(mass_thickness), a.dEdx_in(unit),
                            b.x_in(mass_thickness), b.dEdx_in(unit))

@@ -1,10 +1,7 @@
 """
 Detector geometry: two anodes along the beam (dE, E_res)
-
     entrance ──gap──┬── anode 1 (dE) ──┬── anode 2 (E_res) ──┤
                     x = gap            x = boundary          x = end
-
-All lengths in mm from the detector entrance (x = 0 of the track).
 """
 
 from __future__ import annotations
@@ -38,7 +35,7 @@ class AnodeLayout:
 
     @property
     def boundary_mm(self) -> float:
-        """Where anode 1 ends and anode 2 begins: the target for the Bragg-curve crossing"""
+        """Where anode 1 ends and anode 2 begins"""
         return self.gap_mm + self.anode1_mm
 
     @property
@@ -52,16 +49,14 @@ class AnodeSignals:
     gap: float
     dE: float           # anode 1
     E_res: float        # anode 2
-    escaped: float      # still left at the end of anode 2 (the ion leaves the active volume)
-    # straggling (None when the track was computed without it): 1-sigma widths in MeV and
-    # the correlation of dE and E_res, from the energy covariance along the track
+    escaped: float
     sigma_dE: Optional[float] = None
     sigma_E_res: Optional[float] = None
     corr: Optional[float] = None
 
     @property
     def covariance(self) -> Optional[np.ndarray]:
-        """2x2 covariance of (E_res, dE) in MeV^2 -- E_res first, as on a dE-E plot"""
+        """2x2 covariance of (E_res, dE) in MeV^2 - E_res first, as on a dE-E plot"""
         if self.sigma_dE is None:
             return None
         c = self.corr * self.sigma_dE * self.sigma_E_res
@@ -69,7 +64,7 @@ class AnodeSignals:
 
 
 def anode_signals(track: TrackResult, layout: AnodeLayout) -> AnodeSignals:
-    """Split the energy the track loses in the detector between the regions (mean energy loss)"""
+    """Split the energy the track loses in the detector between the regions"""
     x, E = track.x_mm - track.x_mm[0], track.E
 
     def E_at(d: float) -> float:
@@ -96,7 +91,6 @@ def separation(a: AnodeSignals, b: AnodeSignals) -> Optional[float]:
     """
     How far apart two particles' (E_res, dE) spots are, in units of their spread:
     the Mahalanobis distance between the centres with the average covariance.
-    2 means the 1-sigma ellipses just touch; None without straggling.
     """
     Ca, Cb = a.covariance, b.covariance
     if Ca is None or Cb is None:
@@ -121,16 +115,13 @@ def density_for_crossing(detector: Material,
                          max_iter: int = 6,
                          rtol: float = 1e-6) -> Optional[float]:
     """
-    Gas density (g/cm^3) that puts the crossing of the two particles' dE/dx curves at
-    x_target_mm (normally the anode boundary). None if the curves do not cross.
+    Gas density that puts the crossing of the two particles' dE/dx curves at
+    x_target_mm. None if the curves do not cross.
 
     The mass stopping power does not depend on the density (apart from the density effect,
     which is zero at these velocities), so the crossing sits at a fixed mass thickness X and
     rho = 10 X / x_target. The loop re-runs at the new density until that holds, which also
     covers the density effect.
-
-    run(material, particle) -> TrackResult does the simulation (with the windows), so this
-    uses exactly the same physics as the plot.
     """
     if x_target_mm <= 0 or len(particles) < 2:
         return None

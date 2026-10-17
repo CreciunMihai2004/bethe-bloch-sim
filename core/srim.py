@@ -1,9 +1,7 @@
 """
-Reader for SRIM "Stopping / Range" output tables (SRIM-2008 / SRIM-2013)
+Reader for SRIM "Stopping / Range" output tables
 
 SRIM is used here only as a benchmark: the app computes its own stopping powers.
-The reader accepts both decimal points and decimal commas (SRIM writes the
-separator of the Windows locale, e.g. "6,785E-01" on a Romanian system).
 """
 
 from __future__ import annotations
