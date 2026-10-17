@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
 import numpy as np
@@ -13,8 +13,8 @@ from .units import StoppingUnit, convert_from_mass
 @dataclass
 class SimSettings:
     x_start: float = 0.0        # mm
-    x_stop: float = 1000.0      # mm
-    E_cutoff: float = 0.001     # MeV
+    x_stop: Optional[float] = None   # mm; None = no depth limit (the track runs to the end)
+    E_cutoff: float = 0.0001    # MeV; below this the last bit is added analytically (see simulate)
     dlnE: float = 0.0025        # energy-grid spacing, d(ln E) per point (0.25 % in E)
 
 
@@ -29,10 +29,12 @@ class TrackResult:
     dEdx_mass : mass stopping power (MeV cm^2 / g)
     rho       : material density (g/cm^3)
     stop_reason : why the track ended
-        "stopped"     the particle ran out of energy (range reached)
-        "model_limit" electronic stopping (Bethe-Bloch) is no longer valid below
-                      this energy, so the track stops here; the remaining
-                      slowing-down is NOT in range_mm (see unspent_fraction)
+        "stopped"     the particle ran out of energy: E ends at exactly 0 (range reached)
+        "model_limit" electronic stopping is not valid below this energy, so the track
+                      stops here; the remaining slowing-down is NOT in range_mm (see
+                      unspent_fraction). Only happens if Bethe-Bloch and the low-energy
+                      model never cross, which is not the case for normal ions and gases.
+        "window"      the particle stopped in a window and never reaches this medium
         "x_stop"      the depth limit of SimSettings was hit first
         "max_steps"   no longer produced by simulate() (kept for old exports)
         With "x_stop", range_mm is only a lower bound.
@@ -44,11 +46,20 @@ class TrackResult:
     dEdx_mass: np.ndarray
     rho: float
     stop_reason: str = "stopped"
+    # windows in front of the detector (see core/beamline.py): the energy the beam had
+    # before them and what happened in each one; E[0] is the energy entering this medium
+    E_beam: Optional[float] = None
+    windows: list = field(default_factory=list)
+
+    @property
+    def window_loss(self) -> float:
+        """Energy lost in the windows (MeV), 0 without windows"""
+        return 0.0 if self.E_beam is None else float(self.E_beam - self.E[0])
 
     @property
     def is_complete(self) -> bool:
         """False when the depth or step limit cut the track short"""
-        return self.stop_reason in ("stopped", "model_limit")
+        return self.stop_reason in ("stopped", "model_limit", "window")
 
     @property
     def unspent_fraction(self) -> float:
@@ -100,12 +111,15 @@ def simulate(mat: Material,
              settings: SimSettings,
              progress_cb: Optional[Callable[[float], None]] = None) -> TrackResult:
     """
-    Slow the particle down on a logarithmic energy grid.
+    Slow the particle down on a logarithmic energy grid, from E0 to E_cutoff, and then
+    to exactly E = 0.
 
     The stopping power is evaluated for the whole grid in one vectorized call and
     the depth follows from  x(E) = x_start + integral_E^E0 dE' / S(E')  (trapezoid
-    rule in ln E). The grid is cut where electronic stopping is no longer valid
-    ("model_limit") and at the depth limit ("x_stop").
+    rule in ln E). Below E_cutoff the stopping power is taken to fall like sqrt(E) (true
+    for both the Lindhard-Scharff and the ZBL nuclear part at these energies), which gives
+    the last bit of range as 2 E / S. The track is cut at the depth limit if one is set
+    ("x_stop") and where electronic stopping is invalid ("model_limit").
     """
     if part.E0 is None or part.E0 <= 0:
         raise ValueError(f"{part.name}: initial kinetic energy must be > 0 MeV.")
@@ -115,7 +129,7 @@ def simulate(mat: Material,
 
     mm_to_mass = mat.rho / 10.0
     x_start_m  = settings.x_start * mm_to_mass
-    x_stop_m   = settings.x_stop * mm_to_mass
+    x_stop_m   = None if settings.x_stop is None else settings.x_stop * mm_to_mass
     E0 = float(part.E0)
     E_floor = settings.E_cutoff
 
@@ -157,9 +171,15 @@ def simulate(mat: Material,
     seg = 0.5 * (f[1:] + f[:-1]) * (lnE[:-1] - lnE[1:])
     x = x_start_m + np.concatenate(([0.0], np.cumsum(seg)))
 
+    # the particle reaches the energy cutoff: take it on to rest
+    if stop_reason == "stopped":
+        x = np.append(x, x[-1] + 2.0 * E[-1] / S[-1])
+        E = np.append(E, 0.0)
+        S = np.append(S, 0.0)
+
     # depth limit: end the track exactly at x_stop
-    if x[0] >= x_stop_m or x[-1] > x_stop_m:
-        k = int(np.searchsorted(x, x_stop_m)) 
+    if x_stop_m is not None and (x[0] >= x_stop_m or x[-1] > x_stop_m):
+        k = int(np.searchsorted(x, x_stop_m))
         if k == 0:
             x, E, S = x[:1], E[:1], S[:1]
         else:
@@ -281,6 +301,7 @@ _STOP_TEXT = {
     "stopped": "particle stopped",
     "model_limit": "electronic-stopping model limit",
     "x_stop": "depth limit (range NOT reached)",
+    "window": "stopped in a window (never reaches the detector)",
     "max_steps": "step limit (range NOT reached)",
 }
 
@@ -303,6 +324,8 @@ def export_xlsx(results: List[TrackResult], path: str,
 
     df_meta = pd.DataFrame([{
         "Particle": r.name,
+        "Beam energy (MeV)": float(f"{(r.E[0] if r.E_beam is None else r.E_beam):.6g}"),
+        "Lost in windows (MeV)": float(f"{r.window_loss:.6g}"),
         "Entry energy (MeV)": float(f"{r.E[0]:.6g}"),
         "Final energy (MeV)": float(f"{r.E[-1]:.6g}"),
         "Track end": _STOP_TEXT[r.stop_reason],

@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from .data_io import get_data_dir, load_csv_db
+from .elements import parse_formula
 
 _DATA_DIR = get_data_dir()
 _MATERIALS_CSV = _DATA_DIR / "materials.csv"
@@ -27,6 +28,26 @@ class Material:
     X1: float = 4.0
     a_stern: float = 0.10
     m_stern: float = 3.0
+
+    # Chemical formula, e.g. "C4H10". Optional: the low-energy electronic stopping and the
+    # nuclear stopping are summed over the elements (Bragg additivity). Without a
+    # formula the material is treated as one atom with the effective Z and A above.
+    formula: str = ""
+
+    def __post_init__(self):
+        if self.formula.strip():
+            z_sum = sum(z * n for z, _, n in self.composition)
+            if abs(z_sum - self.Z) > 0.5:
+                raise ValueError(
+                    f"'{self.name}': formula {self.formula} has {z_sum:g} electrons per "
+                    f"formula unit but the Z column says {self.Z:g}")
+
+    @property
+    def composition(self) -> tuple[tuple[float, float, float], ...]:
+        """(Z, A, atoms per formula unit) for every element; one effective atom if there is no formula"""
+        if self.formula.strip():
+            return parse_formula(self.formula)
+        return ((self.Z, self.A, 1.0),)
 
     @property
     def I_MeV(self) -> float:
@@ -61,6 +82,7 @@ def _build_material(row: dict) -> Material:
         X1      = _float(row.get("X1"),      4.0),
         a_stern = _float(row.get("a_stern"), 0.10),
         m_stern = _float(row.get("m_stern"), 3.0),
+        formula = (row.get("formula") or "").strip(),
     )
 
 def _load_material_db(path: Path = _MATERIALS_CSV) -> dict[str, Material]:

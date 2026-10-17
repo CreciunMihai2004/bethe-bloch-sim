@@ -42,3 +42,23 @@ def b10() -> Particle:
     p = get_particle("Boron-10")
     p.E0 = 1.4
     return p
+
+
+_TEST_SETTINGS_ORG = "BraggSimTests"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_session_settings(monkeypatch):
+    """
+    MainWindow.closeEvent saves the session, so every GUI test that closes a window would
+    overwrite the user's real "Last Session". Point all tests at a separate settings name.
+    """
+    try:
+        from ui.main_window import MainWindow
+    except ImportError:                     # no PySide6: GUI tests are skipped anyway
+        yield
+        return
+    monkeypatch.setattr(MainWindow, "_SETTINGS_ORG", _TEST_SETTINGS_ORG)
+    yield
+    from PySide6.QtCore import QSettings
+    QSettings(_TEST_SETTINGS_ORG, MainWindow._SETTINGS_APP).clear()

@@ -11,17 +11,26 @@
 # X1        Sternheimer X1 parameter (default 4.0)
 # a_stern   Sternheimer a  parameter (default 0.10)
 # m_stern   Sternheimer m  parameter (default 3.0)
+# formula   Chemical formula, e.g. C4H10 (optional). Used to sum the low-energy electronic and
+#           the nuclear stopping over the elements; without it the material is one atom with
+#           the effective Z and A. Z must equal the number of electrons in the formula.
 #
 # Lines beginning with # are ignored.
 # Whitespace around values is stripped.
 # Sternheimer columns may be left blank to use the defaults above.
 #
-name,Z,A,I_eV,rho,X0,X1,a_stern,m_stern
+name,Z,A,I_eV,rho,X0,X1,a_stern,m_stern,formula
 #
-Helium (He),2,4.003,41.8,0.0001664,,,
-Argon (Ar),18,39.948,188.0,0.001662,,,
-Methane (CH4),10,16.043,41.7,0.0006672,,,
-Isobutane (C4H10),34,58.124,48.3,0.00251,,,
+Helium (He),2,4.003,41.8,0.0001664,,,,,He
+Argon (Ar),18,39.948,188.0,0.001662,,,,,Ar
+Methane (CH4),10,16.043,41.7,0.0006672,,,,,CH4
+Isobutane (C4H10),34,58.124,48.3,0.00251,,,,,C4H10
 #
-Silicon (Si),14,28.086,173.0,2.329
-Aluminum (Al),13,26.982,166.0,2.699
+Silicon (Si),14,28.086,173.0,2.329,,,,,Si
+Aluminum (Al),13,26.982,166.0,2.699,,,,,Al
+#
+# Window and foil materials (I values: NIST ESTAR; densities of the bulk material)
+Mylar (C10H8O4),100,192.17,78.7,1.40,,,,,C10H8O4
+Kapton (C22H10N2O5),196,382.33,79.6,1.42,,,,,C22H10N2O5
+Polypropylene (C3H6),24,42.081,56.5,0.90,,,,,C3H6
+Carbon (amorphous),6,12.011,78.0,2.0,,,,,C

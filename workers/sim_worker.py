@@ -2,14 +2,15 @@
 Background simulation worker
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 from PySide6.QtCore import QObject, Signal
 
 from core.materials import Material
 from core.particles import Particle
-from core.simulation import SimSettings, TrackResult, simulate
+from core.beamline import Window, simulate_through_windows
+from core.simulation import SimSettings, TrackResult
 
 
 @dataclass
@@ -17,6 +18,7 @@ class SimJob:
     material: Material
     particles: List[Particle]
     settings: SimSettings
+    windows: List[Window] = field(default_factory=list)   # in beam order
 
 
 class _Cancelled(Exception):
@@ -55,7 +57,8 @@ class SimWorker(QObject):
                         raise _Cancelled()
                     self._report(int((i + frac) / n * 100))
 
-                results.append(simulate(self._job.material, part, self._job.settings, cb))
+                results.append(simulate_through_windows(
+                    self._job.material, part, self._job.windows, self._job.settings, cb))
 
             self._report(100)
             self.finished.emit(results)

@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal, QSettings
 from PySide6.QtWidgets import (
     QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget, QCheckBox,
+    QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget, QCheckBox,
 )
 
 from core.materials import MATERIAL_DB, get_material
@@ -16,6 +16,7 @@ from core.simulation import SimSettings, TrackResult, export_csv, export_xlsx, f
 from core.units import StoppingUnit, PlotMode
 from workers.sim_worker import SimJob, SimWorker
 from ui.plot_widget import BraggPlot
+from ui.windows_panel import WindowsPanel
 
 
 class ParticlePanel(QGroupBox):
@@ -133,6 +134,9 @@ class MainWindow(QMainWindow):
         self.p1_panel = ParticlePanel("Particle 1", "Hydrogen-1")
         self.p2_panel = ParticlePanel("Particle 2", "Helium-4")
 
+        # ---- windows in front of the detector ----
+        self.windows_panel = WindowsPanel()
+
         # ---- display options ----
         self.plot_mode_combo = QComboBox()
         for m in PlotMode:
@@ -173,6 +177,7 @@ class MainWindow(QMainWindow):
         control.addWidget(mat_box)
         control.addWidget(self.p1_panel)
         control.addWidget(self.p2_panel)
+        control.addWidget(self.windows_panel)
         control.addWidget(disp_box)
         control.addWidget(self.btn_theme)
         control.addWidget(self.btn_load_session)
@@ -181,7 +186,13 @@ class MainWindow(QMainWindow):
 
         control_widget = QWidget()
         control_widget.setLayout(control)
-        control_widget.setFixedWidth(320)
+
+        # the column is taller than a small screen once windows are added: let it scroll
+        control_scroll = QScrollArea()
+        control_scroll.setWidget(control_widget)
+        control_scroll.setWidgetResizable(True)
+        control_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        control_scroll.setFixedWidth(340)
 
         # ---- plot + results ----
         self.plot = BraggPlot()
@@ -197,7 +208,7 @@ class MainWindow(QMainWindow):
         right_widget.setLayout(right)
 
         root = QHBoxLayout()
-        root.addWidget(control_widget)
+        root.addWidget(control_scroll)
         root.addWidget(right_widget, stretch=1)
         container = QWidget()
         container.setLayout(root)
@@ -213,6 +224,7 @@ class MainWindow(QMainWindow):
 
         self.p1_panel.valueChanged.connect(self.schedule_auto_run)
         self.p2_panel.valueChanged.connect(self.schedule_auto_run)
+        self.windows_panel.valueChanged.connect(self.schedule_auto_run)
 
         self.plot_mode_combo.currentIndexChanged.connect(self.on_display_changed)
         self.unit_combo.currentIndexChanged.connect(self.on_display_changed)
@@ -307,10 +319,20 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Enter a positive E0 for at least one particle.")
             return None
 
+        try:
+            windows = self.windows_panel.windows()
+        except ValueError as e:
+            if show_warnings:
+                QMessageBox.warning(self, "Invalid window", str(e))
+            else:
+                self.statusBar().showMessage(f"Window: {e}")
+            return None
+
         return SimJob(
             material=self._selected_material(),
             particles=valid,
             settings=SimSettings(),
+            windows=windows,
         )
 
     def _start_simulation(self, show_warnings: bool):
@@ -399,6 +421,11 @@ class MainWindow(QMainWindow):
     def _track_warnings(self, r: TrackResult) -> List[str]:
         """Warning lines (rich text) for a track whose range is not the whole story"""
         amber = "<span style='color:#e8a33d'>⚠ {}</span>"
+        if r.stop_reason == "window":
+            w = r.windows[-1]
+            return [amber.format(
+                f"{r.name}: stops inside window {len(r.windows)} ({w.label}) "
+                f"and never reaches the detector.")]
         if r.stop_reason in ("x_stop", "max_steps"):
             why = ("the depth limit was reached" if r.stop_reason == "x_stop"
                    else "the step limit was reached")
@@ -411,6 +438,16 @@ class MainWindow(QMainWindow):
                 f"({r.unspent_fraction:.0%} of E₀), where the Bethe-Bloch model is not valid "
                 f"any more. The slowing-down below that is not included in the range.")]
         return []
+
+    @staticmethod
+    def _windows_line(r: TrackResult) -> str:
+        """beam energy -> each window's loss -> energy entering the detector"""
+        steps = [f"{r.E_beam:.4g} MeV"]
+        for w in r.windows:
+            steps.append(f"{w.label} (−{w.loss * 1000:.1f} keV)")
+        if r.stop_reason != "window":
+            steps.append(f"<b>{r.E[0]:.4g} MeV</b> into the detector")
+        return "&nbsp;&nbsp;windows: " + " → ".join(steps)
 
     def _refresh_results_label(self):
         unit = self._current_unit()
@@ -426,6 +463,8 @@ class MainWindow(QMainWindow):
                 f"<b>{r.name}</b>: range = {r.range_mm:.4f} mm "
                 f"({r.range_mass:.4g} g/cm²), {extra}"
             )
+            if r.windows:
+                lines.append(self._windows_line(r))
             lines.extend(self._track_warnings(r))
 
         if mode is PlotMode.DEDX and len(self._results) >= 2:
@@ -467,6 +506,15 @@ class MainWindow(QMainWindow):
         s.setValue("display/unit", self.unit_combo.currentIndex())
         s.setValue("display/xaxis", self.xaxis_combo.currentIndex())
         s.setValue("display/mode", self.plot_mode_combo.currentIndex())
+
+        # windows
+        s.setValue("windows/enabled", self.windows_panel.isChecked())
+        rows = self.windows_panel.state()
+        s.setValue("windows/count", len(rows))
+        for i, (name, thickness, unit) in enumerate(rows):
+            s.setValue(f"windows/{i}/material", name)
+            s.setValue(f"windows/{i}/thickness", thickness)
+            s.setValue(f"windows/{i}/unit", unit)
 
     def _load_settings(self):
         s = QSettings(self._SETTINGS_ORG, self._SETTINGS_APP)
@@ -534,6 +582,21 @@ class MainWindow(QMainWindow):
                 combo.blockSignals(True)
                 combo.setCurrentIndex(idx)
                 combo.blockSignals(False)
+
+        # windows
+        n = s.value("windows/count", 0, type=int) or 0
+        rows = []
+        for i in range(n):
+            name = s.value(f"windows/{i}/material")
+            thickness = s.value(f"windows/{i}/thickness", type=float)
+            unit = s.value(f"windows/{i}/unit") or "um"
+            if name and thickness is not None:
+                rows.append((name, thickness, unit))
+        self.windows_panel.blockSignals(True)
+        try:
+            self.windows_panel.set_state(rows, s.value("windows/enabled", False, type=bool))
+        finally:
+            self.windows_panel.blockSignals(False)
 
         # sync
         self._sync_controls()

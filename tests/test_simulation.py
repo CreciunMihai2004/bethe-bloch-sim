@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from core.materials import Material
 from core.physics import dEdx_mass
 from core.simulation import SimSettings, simulate
 
@@ -59,25 +60,78 @@ def test_stop_reason_when_depth_limit_cuts_the_track(water, proton):
     assert r.stop_reason == "x_stop"
 
 
-# ---- the electronic-stopping model limit is explicit, not trimmed away ----
+# ---- the track runs all the way down to rest ----
 
-def test_heavy_ion_track_ends_at_the_model_limit_and_says_so(be10, isobutane_low_p):
+def test_heavy_ion_track_runs_down_to_zero_energy(be10, isobutane_low_p):
+    """Used to stop with ~226 keV (14 %) unspent where Bethe-Bloch switched off"""
     r = simulate(isobutane_low_p, be10, SimSettings())
-    assert r.stop_reason == "model_limit"
-    assert 0.10 < r.unspent_fraction < 0.20          # ~226 keV of 1.6 MeV is not tracked
-    assert np.all(np.isfinite(r.dEdx_mass))          # no NaN left at the end of the arrays
+    assert r.stop_reason == "stopped"
+    assert r.E[-1] == 0.0 and r.unspent_fraction == 0.0
+    assert r.dEdx_mass[-1] == 0.0
+    assert np.all(np.isfinite(r.dEdx_mass))
+    assert np.all(np.diff(r.E) < 0) and np.all(np.diff(r.x_mass) > 0)    # strictly down and forward
 
 
-def test_range_is_unchanged_by_replacing_the_trim_heuristic(be10, b10, isobutane_low_p):
-    """Regression guard: the old 1.5 %-of-peak trim gave 372.71 mm / 273.41 mm"""
-    assert simulate(isobutane_low_p, be10, SimSettings()).range_mm == pytest.approx(372.71, rel=5e-3)
-    assert simulate(isobutane_low_p, b10, SimSettings()).range_mm == pytest.approx(273.41, rel=5e-3)
-
-
-def test_starting_below_the_model_limit_does_not_crash(isobutane_low_p, be10):
-    be10.E0 = 0.1                                    # below the Bethe-Bloch validity limit
+def test_the_low_energy_tail_is_a_small_part_of_the_range(be10, isobutane_low_p):
+    """The analytic step from E_cutoff (0.1 keV) to rest must not carry the result"""
     r = simulate(isobutane_low_p, be10, SimSettings())
-    assert r.range_mm == 0.0 and r.stop_reason == "model_limit"
+    assert (r.x_mass[-1] - r.x_mass[-2]) / r.x_mass[-1] < 1e-3
+    coarse = simulate(isobutane_low_p, be10, SimSettings(E_cutoff=1e-3)).range_mm
+    assert coarse == pytest.approx(r.range_mm, rel=2e-3)      # cutting at 1 keV instead changes nothing visible
+
+
+def test_range_regression_and_sanity_against_srim(be10, b10, isobutane_low_p):
+    """
+    Regression values of this model, plus a physical bound from the SRIM exports for the same
+    cases (Be-10 1.6 MeV: 368.3 mm, B-10 1.4 MeV: 242.55 mm). SRIM reports the *projected*
+    range, which is shorter than the path length this app integrates, so the model must not
+    fall below it; it also must not drift far above it.
+    """
+    be = simulate(isobutane_low_p, be10, SimSettings()).range_mm
+    b = simulate(isobutane_low_p, b10, SimSettings()).range_mm
+    assert be == pytest.approx(385.07, rel=5e-3)
+    assert b == pytest.approx(278.70, rel=5e-3)
+    assert 368.3 <= be <= 1.10 * 368.3
+    assert 242.55 <= b <= 1.20 * 242.55          # B-10 is the weaker case: see docs/PROGRESS.md
+
+
+def test_starting_at_low_energy_gives_a_real_range(isobutane_low_p, be10):
+    be10.E0 = 0.1                                    # below the old Bethe-Bloch validity limit
+    r = simulate(isobutane_low_p, be10, SimSettings())
+    assert r.stop_reason == "stopped" and r.range_mm > 0.0
+    be10.E0 = 1.6
+    assert r.range_mm < simulate(isobutane_low_p, be10, SimSettings()).range_mm
+
+
+def test_default_settings_have_no_depth_limit(be10):
+    """The detector used to be capped at 1000 mm; a long track must now run to its end"""
+    assert SimSettings().x_stop is None
+    long_gas = Material("Thin gas", Z=34, A=58.124, I_eV=48.3, rho=1.0e-6, formula="C4H10")
+    r = simulate(long_gas, be10, SimSettings())
+    assert r.range_mm > 1000.0
+    assert r.stop_reason == "stopped" and r.E[-1] == 0.0
+    assert r.range_mm == pytest.approx(
+        simulate(long_gas, be10, SimSettings(x_stop=1e9)).range_mm, rel=1e-12)
+
+
+def test_an_explicit_depth_limit_still_works(be10):
+    long_gas = Material("Thin gas", Z=34, A=58.124, I_eV=48.3, rho=1.0e-6, formula="C4H10")
+    r = simulate(long_gas, be10, SimSettings(x_stop=1000.0))
+    assert r.stop_reason == "x_stop" and r.range_mm == pytest.approx(1000.0, rel=1e-9)
+    assert r.E[-1] > 0
+
+
+def test_model_limit_fallback_when_there_is_no_low_energy_law(be10, isobutane_low_p, monkeypatch):
+    """If Bethe-Bloch never reaches the matching slope the old behaviour (stop at the limit) remains"""
+    import core.physics as physics
+    from core.physics import dEdx_components
+    monkeypatch.setattr(physics, "_matching_point", lambda mat, part: (0.0, 0.0))
+    r = simulate(isobutane_low_p, be10, SimSettings())
+    assert r.stop_reason == "model_limit" and 0.10 < r.unspent_fraction < 0.20
+    assert dEdx_components(isobutane_low_p, be10, r.E[-1])[0] > 0
+    assert dEdx_components(isobutane_low_p, be10, r.E[-1] * (1 - 1e-4))[0] == 0
+    be10.E0 = 0.1                                    # starts below the limit: empty track, no crash
+    assert simulate(isobutane_low_p, be10, SimSettings()).range_mm == 0.0
 
 
 def test_unspent_fraction_is_zero_for_a_particle_that_really_stops(water, proton):
@@ -93,15 +147,6 @@ def test_range_is_converged_in_the_energy_grid(be10, isobutane_low_p):
     coarse = simulate(isobutane_low_p, be10, SimSettings()).range_mm
     fine = simulate(isobutane_low_p, be10, SimSettings(dlnE=1e-4)).range_mm
     assert coarse == pytest.approx(fine, rel=5e-4)
-
-
-def test_model_limit_track_ends_exactly_at_the_limit(be10, isobutane_low_p):
-    """Stopping power is small there, so ending a grid step early would drop part of the range"""
-    from core.physics import dEdx_components
-    r = simulate(isobutane_low_p, be10, SimSettings())
-    E_end = r.E[-1]
-    assert dEdx_components(isobutane_low_p, be10, E_end)[0] > 0
-    assert dEdx_components(isobutane_low_p, be10, E_end * (1 - 1e-4))[0] == 0
 
 
 def test_depth_limit_ends_the_track_exactly_at_x_stop(water, proton):
