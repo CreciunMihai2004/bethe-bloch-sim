@@ -28,9 +28,3 @@ Isobutane (C4H10),34,58.124,48.3,0.00251,,,,,C4H10
 #
 Silicon (Si),14,28.086,173.0,2.329,,,,,Si
 Aluminum (Al),13,26.982,166.0,2.699,,,,,Al
-#
-# Window and foil materials (I values: NIST ESTAR; densities of the bulk material)
-Mylar (C10H8O4),100,192.17,78.7,1.40,,,,,C10H8O4
-Kapton (C22H10N2O5),196,382.33,79.6,1.42,,,,,C22H10N2O5
-Polypropylene (C3H6),24,42.081,56.5,0.90,,,,,C3H6
-Carbon (amorphous),6,12.011,78.0,2.0,,,,,C

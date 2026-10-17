@@ -9,7 +9,6 @@ from typing import Callable, Dict, Iterable, TypeVar
 T = TypeVar("T")
 
 def get_data_dir() -> Path:
-    """Folder holding the editable CSV files (next to the .exe when frozen)"""
     if getattr(sys, 'frozen', False):
         base_dir = Path(sys.executable).parent
     else:

@@ -14,7 +14,7 @@ from .units import StoppingUnit, convert_from_mass
 class SimSettings:
     x_start: float = 0.0        # mm
     x_stop: Optional[float] = None   # mm; None = no depth limit (the track runs to the end)
-    E_cutoff: float = 0.0001    # MeV; below this the last bit is added analytically (see simulate)
+    E_cutoff: float = 0.0001    # MeV; below this the last bit is added analytically
     dlnE: float = 0.0025        # energy-grid spacing, d(ln E) per point (0.25 % in E)
 
 
@@ -34,7 +34,6 @@ class TrackResult:
                       stops here; the remaining slowing-down is NOT in range_mm (see
                       unspent_fraction). Only happens if Bethe-Bloch and the low-energy
                       model never cross, which is not the case for normal ions and gases.
-        "window"      the particle stopped in a window and never reaches this medium
         "x_stop"      the depth limit of SimSettings was hit first
         "max_steps"   no longer produced by simulate() (kept for old exports)
         With "x_stop", range_mm is only a lower bound.

@@ -30,8 +30,7 @@ class Material:
     m_stern: float = 3.0
 
     # Chemical formula, e.g. "C4H10". Optional: the low-energy electronic stopping and the
-    # nuclear stopping are summed over the elements (Bragg additivity). Without a
-    # formula the material is treated as one atom with the effective Z and A above.
+    # nuclear stopping are summed over the elements (Bragg additivity).
     formula: str = ""
 
     def __post_init__(self):
