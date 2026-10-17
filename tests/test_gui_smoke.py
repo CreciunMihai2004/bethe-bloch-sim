@@ -56,17 +56,30 @@ def test_results_label_warns_when_track_is_cut(qapp, water, proton):
     win.close()
 
 
-def test_results_label_reports_the_model_limit_only_when_it_matters(qapp, water, proton, be10, isobutane_low_p):
+def test_results_label_has_no_warning_for_a_track_that_runs_to_rest(qapp, water, proton, be10, isobutane_low_p):
     from ui.main_window import MainWindow
     win = MainWindow()
 
-    proton.E0 = 5.0                                  # ~0.4 % unspent: not worth a warning
-    w = SimWorker(SimJob(water, [proton], SimSettings(x_stop=1e4)))
+    proton.E0 = 5.0
+    w = SimWorker(SimJob(water, [proton], SimSettings()))
     w.finished.connect(win.on_sim_done)
     w.run()
     assert "⚠" not in win.results_label.text()
 
-    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))     # ~14 % unspent
+    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))     # used to warn: ~14 % unspent
+    w.finished.connect(win.on_sim_done)
+    w.run()
+    assert "⚠" not in win.results_label.text()
+    win.close()
+
+
+def test_results_label_reports_the_model_limit_when_there_is_no_low_energy_law(
+        qapp, be10, isobutane_low_p, monkeypatch):
+    import core.physics as physics
+    from ui.main_window import MainWindow
+    monkeypatch.setattr(physics, "_matching_point", lambda mat, part: (0.0, 0.0))
+    win = MainWindow()
+    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))     # ~14 % unspent again
     w.finished.connect(win.on_sim_done)
     w.run()
     assert "⚠" in win.results_label.text() and "not valid" in win.results_label.text()

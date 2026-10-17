@@ -90,3 +90,76 @@ def test_scalar_input_still_returns_plain_floats(water, proton):
     elec, nuc = dEdx_components(water, proton, 10.0)
     assert type(elec) is float and type(nuc) is float
     assert type(dEdx_mass(water, proton, 10.0)) is float
+
+
+# ---- low-energy electronic stopping (velocity-proportional law matched to Bethe-Bloch) ----
+
+def _log_slope(f, E, h=1e-3):
+    return (np.log(f(E * (1 + h))) - np.log(f(E * (1 - h)))) / (np.log(1 + h) - np.log(1 - h))
+
+
+def test_electronic_stopping_goes_to_zero_like_sqrt_of_the_energy(be10, isobutane_low_p):
+    from core.physics import _matching_point
+    E_m, _ = _matching_point(isobutane_low_p, be10)
+    elec = lambda E: dEdx_components(isobutane_low_p, be10, E)[0]
+    for E in (1e-4, 1e-3, 1e-2, 0.5 * E_m):
+        assert elec(E) > 0
+        assert _log_slope(elec, E) == pytest.approx(0.5, abs=1e-6)
+    assert elec(1e-4) < elec(1e-3) < elec(1e-2)
+
+
+@pytest.mark.parametrize("mat_fixture, part_fixture", [("isobutane_low_p", "be10"),
+                                                       ("isobutane_low_p", "b10"),
+                                                       ("water", "proton")])
+def test_low_energy_law_joins_bethe_bloch_smoothly(mat_fixture, part_fixture, request):
+    """Same value and same slope on both sides of E_m (that is how E_m and the amplitude are fixed)"""
+    from core.physics import _matching_point
+    mat, part = request.getfixturevalue(mat_fixture), request.getfixturevalue(part_fixture)
+    E_m, _ = _matching_point(mat, part)
+    assert E_m > 0
+    elec = lambda E: dEdx_components(mat, part, E)[0]
+    assert elec(E_m * (1 - 1e-4)) == pytest.approx(elec(E_m * (1 + 1e-4)), rel=5e-4)
+    # probe right next to the join: Bethe-Bloch itself bends away from slope 1/2 above E_m
+    # (its log-slope changes by ~2 per unit of ln E for a proton in water), so 1 % away is too far
+    assert _log_slope(elec, E_m * 0.9995, 2e-4) == pytest.approx(0.5, abs=0.01)
+    assert _log_slope(elec, E_m * 1.0005, 2e-4) == pytest.approx(0.5, abs=0.01)
+
+
+def test_high_energy_is_untouched_by_the_low_energy_law(water, proton):
+    from core.physics import bethe_stopping
+    for E in (1.0, 10.0, 100.0):
+        assert dEdx_components(water, proton, E)[0] == bethe_stopping(water, proton, E)
+
+
+@pytest.mark.parametrize("part_fixture, lo, hi", [("be10", 0.7, 1.05), ("b10", 0.8, 1.1)])
+def test_low_energy_amplitude_agrees_with_lindhard_scharff(part_fixture, lo, hi, isobutane_low_p, request):
+    """
+    Independent check of the amplitude, which comes from Bethe-Bloch and has no free
+    parameter: Lindhard-Scharff, S = 8 pi e^2 a0 * Z1^(7/6) Z2 / (Z1^(2/3) + Z2^(2/3))^(3/2) * v/v0,
+    summed over the elements, must be within the usual few-10 % of it.
+    """
+    from core.constants import N_A
+    part = request.getfixturevalue(part_fixture)
+    E = np.array([0.01, 0.03, 0.1, 0.3])
+    beta = np.sqrt(2.0 * E / part.M)
+    ls = sum(n * 19.15 * part.z ** (7 / 6) * Z2 / (part.z ** (2 / 3) + Z2 ** (2 / 3)) ** 1.5
+             for Z2, _, n in isobutane_low_p.composition) * beta * 137.036
+    ls = ls * (N_A / isobutane_low_p.A) * 1e-21                      # eV/1e15 atoms/cm2 -> MeV cm2/g
+    ratio = dEdx_components(isobutane_low_p, part, E)[0] / ls
+    assert np.all((ratio > lo) & (ratio < hi)), ratio
+
+
+def test_nuclear_stopping_is_summed_over_the_elements(be10):
+    """C4H10 as C and H separately, not as one atom with Z = 34/14"""
+    from core.physics import zbl_nuclear_stopping
+    butane = Material("Butane", Z=34, A=58.124, I_eV=48.3, rho=1.0e-3, formula="C4H10")
+    lumped = Material("Butane", Z=34, A=58.124, I_eV=48.3, rho=1.0e-3)
+    E = 0.01
+    by_element = zbl_nuclear_stopping(E, be10, butane)
+    assert by_element != pytest.approx(zbl_nuclear_stopping(E, be10, lumped), rel=0.05)
+    # reference: mass-weighted sum of the one-element stopping powers
+    c = Material("C", Z=6, A=12.011, I_eV=81.0, rho=1.0)
+    h = Material("H", Z=1, A=1.008, I_eV=19.2, rho=1.0)
+    w_c, w_h = 4 * 12.011 / 58.124, 10 * 1.008 / 58.124
+    assert by_element == pytest.approx(w_c * zbl_nuclear_stopping(E, be10, c)
+                                       + w_h * zbl_nuclear_stopping(E, be10, h), rel=1e-9)
