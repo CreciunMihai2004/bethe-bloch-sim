@@ -3,25 +3,30 @@
 # Columns
 # -------
 # name      Display name shown in the UI (must be unique)
-# Z         Effective atomic number
-# A         Molar mass               (g/mol)
-# I_eV      Mean excitation energy   (eV) NIST / ICRU 49 values
+# Z         Electrons per formula unit   } leave blank when a formula is given:
+# A         Molar mass (g/mol)           } summed over the formula
+# I_eV      Mean excitation energy (eV)  } Bragg additivity over the formula (core/elements.py);
+#                                          a value given here overrides it (e.g. ICRU 49's
+#                                          48.3 eV for isobutane; the rule gives 47.85 eV)
 # rho       Density at STP           (g/cm^3)
 # X0        Sternheimer X0 parameter (default 1.6)
 # X1        Sternheimer X1 parameter (default 4.0)
 # a_stern   Sternheimer a  parameter (default 0.10)
 # m_stern   Sternheimer m  parameter (default 3.0)
+# formula   Chemical formula, e.g. C4H10. Gives Z, A and I, and sums the nuclear stopping and
+#           the straggling over the elements. Without a formula, Z, A and I_eV must all be
+#           given and the material is treated as one effective atom.
 #
 # Lines beginning with # are ignored.
 # Whitespace around values is stripped.
 # Sternheimer columns may be left blank to use the defaults above.
 #
-name,Z,A,I_eV,rho,X0,X1,a_stern,m_stern
+name,Z,A,I_eV,rho,X0,X1,a_stern,m_stern,formula
 #
-Helium (He),2,4.003,41.8,0.0001664,,,
-Argon (Ar),18,39.948,188.0,0.001662,,,
-Methane (CH4),10,16.043,41.7,0.0006672,,,
-Isobutane (C4H10),34,58.124,48.3,0.00251,,,
+Helium (He),,,,0.0001664,,,,,He
+Argon (Ar),,,,0.001662,,,,,Ar
+Methane (CH4),,,,0.0006672,,,,,CH4
+Isobutane (C4H10),,,,0.00251,,,,,C4H10
 #
-Silicon (Si),14,28.086,173.0,2.329
-Aluminum (Al),13,26.982,166.0,2.699
+Silicon (Si),,,,2.329,,,,,Si
+Aluminum (Al),,,,2.699,,,,,Al

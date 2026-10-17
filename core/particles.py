@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import colorsys
 import itertools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -20,7 +20,6 @@ _GOLDEN_RATIO_CONJUGATE = 0.618033988749895
 
 
 def _color_sequence() -> Iterator[str]:
-    """Endless supply of well-separated plot colours (golden-ratio hue steps)"""
     for i in itertools.count():
         rgb = colorsys.hsv_to_rgb((_GOLDEN_RATIO_CONJUGATE * i) % 1.0, 1.0, 1.0)
         yield "#" + "".join(f"{int(c * 255):02x}" for c in rgb)
@@ -51,8 +50,6 @@ class Particle:
 
 def _build_particle(row: dict) -> Particle:
     e0 = (row.get("E0") or "").strip()
-
-    # Use the CSV colour when given; otherwise the dataclass picks its own
     color = (row.get("color") or "").strip()
     extra = {"color": color} if color else {}
 
@@ -77,7 +74,7 @@ PARTICLE_DB: dict[str, Particle] = _load_particle_db()
 
 def get_particle(name: str) -> Particle:
     try:
-        return PARTICLE_DB[name]
+        return replace(PARTICLE_DB[name])
     except KeyError:
         raise KeyError(
             f"Particle '{name}' not found.\n"
@@ -86,5 +83,7 @@ def get_particle(name: str) -> Particle:
 
 
 def reload() -> None:
-    global PARTICLE_DB
-    PARTICLE_DB = _load_particle_db()
+    fresh = _load_particle_db()
+    PARTICLE_DB.clear()
+    PARTICLE_DB.update(fresh)
+

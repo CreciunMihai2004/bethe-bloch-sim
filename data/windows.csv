@@ -1,0 +1,11 @@
+# Window and foil materials (shown in the Beamline tab, not in the detector medium list)
+#
+# Same columns as materials.csv: with a formula, Z, A and I_eV are computed (leave them blank)
+# rho: bulk density (g/cm^3)
+#
+name,Z,A,I_eV,rho,X0,X1,a_stern,m_stern,formula
+#
+Mylar (C10H8O4),,,,1.40,,,,,C10H8O4
+Kapton (C22H10N2O5),,,,1.42,,,,,C22H10N2O5
+Polypropylene (C3H6),,,,0.90,,,,,C3H6
+Carbon (amorphous),,,,2.0,,,,,C
