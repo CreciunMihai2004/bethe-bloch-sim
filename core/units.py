@@ -17,6 +17,7 @@ class StoppingUnit(Enum):
 class PlotMode(Enum):
     DEDX   = "Stopping power (dE/dx)"
     ENERGY = "Kinetic energy (MeV)"
+    DE_E   = "ΔE vs E_res (anodes)"
 
     @property
     def label(self) -> str:

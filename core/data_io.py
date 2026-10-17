@@ -8,13 +8,15 @@ from typing import Callable, Dict, Iterable, TypeVar
 
 T = TypeVar("T")
 
-def get_data_dir() -> Path:
+def get_base_dir() -> Path:
+    """The program folder: next to the .exe when frozen (PyInstaller), else the project root"""
     if getattr(sys, 'frozen', False):
-        base_dir = Path(sys.executable).parent
-    else:
-        base_dir = Path(__file__).resolve().parent.parent
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent.parent
 
-    return base_dir / "data"
+
+def get_data_dir() -> Path:
+    return get_base_dir() / "data"
 
 def load_csv_db(path: Path,
                 required: Iterable[str],

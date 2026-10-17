@@ -2,6 +2,8 @@
 
 from typing import List, Optional
 
+import numpy as np
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -9,7 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from core.detector import AnodeLayout, anode_signals
+from core.detector import AnodeLayout, anode_signals, separation
 from core.simulation import TrackResult, find_intersections
 from core.units import PlotMode, StoppingUnit
 
@@ -39,12 +41,20 @@ def track_warning(r: TrackResult, layout: Optional[AnodeLayout] = None) -> str:
     return ""
 
 
+def _pm(value: float, sigma, digits: int) -> str:
+    """'value ± sigma', or just the value without straggling"""
+    if sigma is None:
+        return f"{value:.{digits}f}"
+    return f"{value:.{digits}f} ± {sigma:.{digits}f}"
+
+
 def windows_tooltip(r: TrackResult) -> str:
     if not r.windows:
         return ""
     lines = [f"Beam: {r.E_beam:.4g} MeV"]
     for i, w in enumerate(r.windows, 1):
-        lines.append(f"{i}. {w.label}: −{w.loss * 1000:.1f} keV → {w.E_out:.4g} MeV")
+        spread = f" (σ {w.sigma_out * 1000:.1f} keV)" if w.sigma_out > 0 else ""
+        lines.append(f"{i}. {w.label}: −{w.loss * 1000:.1f} keV → {w.E_out:.4g} MeV{spread}")
     return "\n".join(lines)
 
 
@@ -72,6 +82,10 @@ class ResultsView(QWidget):
 
         self.crossing_label = QLabel()
         self.crossing_label.setTextFormat(Qt.RichText)
+        self.crossing_label.setToolTip(
+            "± and the separation include the beam spread and electronic (Bohr) straggling only.\n"
+            "Charge-exchange straggling, nuclear scattering and the detector resolution\n"
+            "widen the real spots, so the real separation is smaller.")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -90,6 +104,10 @@ class ResultsView(QWidget):
         self._fit_height()
         self.crossing_label.setText(text)
 
+    def show_error(self, text: str):
+        """A problem with the inputs or the run: replaces the results until the next good run"""
+        self.show_message(f"<span style='color:{_AMBER}'>⚠ {text}</span>")
+
     def update_results(self, results: List[TrackResult], unit: StoppingUnit, mode: PlotMode,
                        mass_thickness: bool, layout: Optional[AnodeLayout]):
         anodes = layout is not None
@@ -106,12 +124,13 @@ class ResultsView(QWidget):
             cells = [
                 name,
                 QTableWidgetItem(f"{r.E[0]:.4f}" if reached else "—"),
-                QTableWidgetItem(f"{r.range_mm:.2f}" if reached else "—"),
+                QTableWidgetItem(_pm(r.range_mm, r.range_sigma_mm, 2) if reached else "—"),
                 QTableWidgetItem(f"{r.peak_dEdx(unit):.5g}" if reached else "—"),
             ]
             if anodes and reached:
                 s = anode_signals(r, layout)
-                cells += [QTableWidgetItem(f"{s.dE:.4f}"), QTableWidgetItem(f"{s.E_res:.4f}")]
+                cells += [QTableWidgetItem(_pm(s.dE, s.sigma_dE, 4)),
+                          QTableWidgetItem(_pm(s.E_res, s.sigma_E_res, 4))]
             else:
                 cells += [QTableWidgetItem("—"), QTableWidgetItem("—")]
             if r.windows:
@@ -131,10 +150,16 @@ class ResultsView(QWidget):
         self.crossing_label.setText(
             self._crossing_text(results, unit, mode, mass_thickness, layout))
 
-    @staticmethod
-    def _crossing_text(results, unit, mode, mass_thickness, layout) -> str:
-        if mode is not PlotMode.DEDX or len(results) < 2:
+    @classmethod
+    def _crossing_text(cls, results, unit, mode, mass_thickness, layout) -> str:
+        if len(results) < 2:
             return ""
+        sep = cls._separation_text(results, layout)
+        if mode is PlotMode.DE_E:
+            return sep or ("<span style='color:gray'>Switch on the anodes (Detector tab) "
+                           "for the ΔE-E view.</span>" if layout is None else "")
+        if mode is not PlotMode.DEDX:
+            return sep
         pts = find_intersections(results[0], results[1], unit, mass_thickness)
         if not pts:
             return "<span style='color:gray'>The dE/dx curves do not cross.</span>"
@@ -148,7 +173,19 @@ class ResultsView(QWidget):
             side = "past" if d > 0 else "before"
             text += (f" &nbsp;·&nbsp; {abs(d):.2f} mm {side} the anode boundary"
                      if abs(d) >= 0.005 else " &nbsp;·&nbsp; on the anode boundary")
+        if sep:
+            text += " &nbsp;·&nbsp; " + sep
         return text
+
+    @staticmethod
+    def _separation_text(results, layout) -> str:
+        if layout is None or any(r.stop_reason == "window" for r in results[:2]):
+            return ""
+        d = separation(anode_signals(results[0], layout), anode_signals(results[1], layout))
+        if d is None:
+            return ""
+        return (f"<b>ΔE-E separation:</b> {d:.1f}σ"
+                if np.isfinite(d) else "<b>ΔE-E separation:</b> —")
 
     # ---- plain text, for tests and copying ----
 

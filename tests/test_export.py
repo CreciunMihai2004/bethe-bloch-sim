@@ -1,9 +1,9 @@
 """CSV / Excel export"""
 
-import numpy as np
 import pandas as pd
 
-from core.simulation import SimSettings, export_csv, export_xlsx, simulate
+from core.export import export_csv, export_xlsx
+from core.simulation import SimSettings, simulate
 from core.units import StoppingUnit
 
 
@@ -42,4 +42,4 @@ def test_xlsx_metadata_records_where_and_why_the_track_ended(tmp_path, water, pr
     assert {"Entry energy (MeV)", "Final energy (MeV)", "Track end"} <= set(meta.columns)
     assert (meta["Final energy (MeV)"] < meta["Entry energy (MeV)"]).all()
     assert set(meta["Track end"]) <= {"particle stopped", "electronic-stopping model limit",
-                                      "depth limit (range NOT reached)", "step limit (range NOT reached)"}
+                                      "depth limit (range NOT reached)"}

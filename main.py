@@ -1,19 +1,14 @@
 """Application"""
 
-from pathlib import Path
 import sys
 import ctypes
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 
+from core.data_io import get_base_dir
 from ui.main_window import MainWindow
 
-def get_base_dir() -> Path:
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent
-    else:
-        return Path(__file__).resolve().parent
 
 def main():
     if sys.platform == 'win32':

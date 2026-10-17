@@ -3,8 +3,9 @@ Windows between the beam and the detector gas
 
 A window is a thickness of one material from the material database. The beam passes
 through the windows in order, losing energy in each (same stopping-power model as the
-detector, mean energy loss only: no straggling yet), and the detector track starts at
-the energy that comes out of the last one.
+detector), and the detector track starts at the energy that comes out of the last one.
+The energy spread (beam spread + straggling in every window, see core/straggling.py) is
+carried along and handed to the detector track.
 
 This is the first piece of the beamline chain; stripper gas, foils and the accelerator
 stages can be added as more layers later.
@@ -13,13 +14,15 @@ stages can be added as more layers later.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Callable, List, Optional, Sequence
+from math import sqrt
+from typing import List, Sequence
 
 import numpy as np
 
 from .materials import Material
 from .particles import Particle
 from .simulation import SimSettings, TrackResult, simulate
+from .straggling import track_reduced_variance
 
 # thickness units: label -> how to get g/cm^2 from (value, density in g/cm^3)
 THICKNESS_UNITS = {
@@ -63,8 +66,9 @@ class Window:
 class WindowPassage:
     """What one window did to the beam"""
     label: str
-    E_in: float     # MeV
-    E_out: float    # MeV, 0 when the particle stops inside the window
+    E_in: float             # MeV
+    E_out: float            # MeV, 0 when the particle stops inside the window
+    sigma_out: float = 0.0  # MeV, 1-sigma energy spread leaving the window
 
     @property
     def stopped(self) -> bool:
@@ -75,20 +79,26 @@ class WindowPassage:
         return self.E_in - self.E_out
 
 
-def pass_windows(part: Particle, E_beam: float, windows: Sequence[Window]) -> List[WindowPassage]:
+def pass_windows(part: Particle, E_beam: float, windows: Sequence[Window],
+                 sigma_beam: float = 0.0, straggling: bool = True) -> List[WindowPassage]:
     """
-    Energy before and after every window. Stops early if the particle comes to rest in one
-    (that window is the last entry, with E_out = 0)
+    Energy (and its 1-sigma spread) before and after every window. Stops early if the
+    particle comes to rest in one (that window is the last entry, with E_out = 0)
     """
     passages: List[WindowPassage] = []
-    E = float(E_beam)
+    E, var = float(E_beam), float(sigma_beam) ** 2
     for w in windows:
-        r = simulate(w.material, replace(part, E0=E), SimSettings(x_stop=w.thickness_mm))
+        p = replace(part, E0=E)
+        r = simulate(w.material, p, SimSettings(x_stop=w.thickness_mm))
         # only "x_stop" means the particle came out the other side
-        E_out = float(r.E[-1]) if r.stop_reason == "x_stop" else 0.0
-        passages.append(WindowPassage(w.label, E, E_out))
-        if E_out <= 0.0:
+        if r.stop_reason != "x_stop":
+            passages.append(WindowPassage(w.label, E, 0.0, 0.0))
             break
+        E_out = float(r.E[-1])
+        if straggling and len(r.E) > 1:
+            J = track_reduced_variance(r, w.material, p, var)
+            var = float(r.dEdx_mass[-1] ** 2 * J[-1])
+        passages.append(WindowPassage(w.label, E, E_out, sqrt(var)))
         E = E_out
     return passages
 
@@ -97,27 +107,32 @@ def simulate_through_windows(detector: Material,
                              part: Particle,
                              windows: Sequence[Window],
                              settings: SimSettings,
-                             progress_cb: Optional[Callable[[float], None]] = None) -> TrackResult:
+                             sigma_beam: float = 0.0,
+                             straggling: bool = True) -> TrackResult:
     """
-    The Bragg curve in the detector for a beam of energy part.E0 that first passes the windows.
-    The result's E[0] is the detector entry energy, E_beam the energy before the windows.
+    The Bragg curve in the detector for a beam of energy part.E0 (1-sigma spread sigma_beam,
+    MeV) that first passes the windows. The result's E[0] is the detector entry energy,
+    E_beam the energy before the windows; with straggling the track carries strag_J, so
+    its sigma_E, range spread and anode-signal widths are available.
     """
     if part.E0 is None or part.E0 <= 0:
         raise ValueError(f"{part.name}: initial kinetic energy must be > 0 MeV.")
 
-    passages = pass_windows(part, part.E0, windows)
+    passages = pass_windows(part, part.E0, windows, sigma_beam, straggling)
     E_det = passages[-1].E_out if passages else float(part.E0)
+    var_det = (passages[-1].sigma_out if passages else float(sigma_beam)) ** 2
 
     if E_det <= 0.0:
-        if progress_cb is not None:
-            progress_cb(1.0)
         x0 = settings.x_start * detector.rho / 10.0
         return TrackResult(name=part.name, color=part.color,
                            x_mass=np.array([x0]), E=np.array([0.0]), dEdx_mass=np.array([0.0]),
                            rho=detector.rho, stop_reason="window",
                            E_beam=float(part.E0), windows=passages)
 
-    r = simulate(detector, replace(part, E0=E_det), settings, progress_cb)
+    p = replace(part, E0=E_det)
+    r = simulate(detector, p, settings)
     r.E_beam = float(part.E0)
     r.windows = passages
+    if straggling and len(r.E) > 1:
+        r.strag_J = track_reduced_variance(r, detector, p, var_det)
     return r

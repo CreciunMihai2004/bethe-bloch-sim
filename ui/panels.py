@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import QSettings, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
     QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -268,5 +268,53 @@ class DetectorPanel(QWidget):
                 v = s.value(f"detector/{key}", type=float)
                 if v is not None and v >= 0 and s.contains(f"detector/{key}"):
                     w.setValue(v)
+        finally:
+            self.blockSignals(False)
+
+
+class BeamPanel(QGroupBox):
+    """Beam energy spread and the straggling switch"""
+
+    valueChanged = Signal()
+
+    def __init__(self):
+        super().__init__("Beam")
+        self.sigma = _spin(0.0, 1000.0, 2, 1.0, " keV")
+        self.sigma.setToolTip("1σ energy spread of the beam before the first window")
+        self.straggling = QCheckBox("Energy straggling")
+        self.straggling.setChecked(True)
+        self.straggling.setToolTip(
+            "Bohr straggling with the effective charge and the Lindhard-Scharff\n"
+            "low-velocity factor, carried through the windows and the gas.\n"
+            "Not yet included: charge-exchange and nuclear-collision straggling.")
+
+        form = QFormLayout(self)
+        form.addRow("Energy spread σ:", self.sigma)
+        form.addRow(self.straggling)
+
+        self.sigma.valueChanged.connect(lambda _: self.valueChanged.emit())
+        self.straggling.toggled.connect(lambda _: self.valueChanged.emit())
+
+    def beam_sigma(self) -> float:
+        """MeV"""
+        return self.sigma.value() * 1e-3
+
+    def straggling_on(self) -> bool:
+        return self.straggling.isChecked()
+
+    # ---- session ----
+
+    def save(self, s: QSettings):
+        s.setValue("beam/sigma_keV", self.sigma.value())
+        s.setValue("beam/straggling", self.straggling.isChecked())
+
+    def load(self, s: QSettings):
+        self.blockSignals(True)
+        try:
+            v = s.value("beam/sigma_keV", type=float)
+            if v is not None and v >= 0 and s.contains("beam/sigma_keV"):
+                self.sigma.setValue(v)
+            if s.contains("beam/straggling"):
+                self.straggling.setChecked(s.value("beam/straggling", type=bool))
         finally:
             self.blockSignals(False)

@@ -1,6 +1,5 @@
 """CSV databases"""
 
-import warnings
 
 import pytest
 

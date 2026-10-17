@@ -15,6 +15,7 @@ Thesis working title: *Numerical Modelling of Heavy-Ion Energy Loss and Bragg Cu
 | 7 | SRIM benchmark: `core/srim.py` reads SRIM-2013 stopping/range tables (decimal commas or points); the institute's tables (Be-10, B-10 in n-butane, 1.08e-5 g/cm³, 10 keV-2 MeV) are in `tests/data` with benchmark tests | nuclear stopping within 1.5 % of SRIM at every energy; path-length bands guarded |
 | 8 | Windows, first part of the beamline: `core/beamline.py` passes the beam through an ordered list of windows (µm, nm, µg/cm², mg/cm²) with the same stopping model; the detector track starts at the energy that comes out; a particle can stop in a window. Window materials in `data/windows.csv` (Mylar, Kapton, polypropylene, amorphous carbon; NIST ESTAR I values) | E_out reproduces R(E_in) − t within 0.5 %; thin-window loss = S·t |
 | 9 | Anodes and UI reorganisation: `core/detector.py` (anode layout, ΔE / E_res per particle, pressure finder that puts the dE/dx crossing on the anode boundary, ρ = 10·X_cross / x_boundary); tabs Setup / Beamline / Detector, display row above the plot, File menu, compact results table (details in tooltips), anode bands on the plot, anode signals in the Excel metadata; density box with significant digits (the old 8-decimal box kept 3 digits at 1e-5); `get_material` / `get_particle` return copies | crossing within 1 µm of the boundary; ΔE + E_res + gap + escaped = E_in |
+| 10 | Energy straggling, first part: `core/straggling.py` (Bohr rate with the effective charge, Lindhard-Scharff low-velocity factor, per element), carried from the beam (energy spread input) through every window into the gas: var E = S² J; range straggling, ΔE / E_res widths and their correlation, ΔE-E separation; ΔE vs E_res plot with 1σ / 2σ ellipses, ±1σ band in the energy plot, widths in the results and the Excel metadata. Clean-up: no status bar (problems show in the results line), runs are synchronous (the worker thread, progress and cancel code are gone), export in `core/export.py`, one `get_base_dir()` | σ_E, correlation and range spread within 0.5 % of a brute-force Monte Carlo (20 000 ions) |
 
 ## Validation log
 
@@ -33,13 +34,16 @@ Thesis working title: *Numerical Modelling of Heavy-Ion Energy Loss and Bragg Cu
 | 2026-10-17 | B-10 path length 10 keV → 1.4 MeV | 272.1 mm | 241.4 mm from SRIM's own S columns | +12.8 % |
 | 2026-10-17 | Be-10 S_e app/SRIM | 0.81 (10-20 keV), 0.88-0.95 (50-200 keV), 1.00-1.03 (300 keV-1 MeV), 0.90 (1.6 MeV) | SRIM-2013 | errors partly cancel in the range |
 | 2026-10-17 | B-10 S_e app/SRIM | 0.63-0.66 (10-50 keV), 0.75-0.87 (100-200 keV), 0.91-0.95 (300 keV-1.4 MeV) | SRIM-2013 | the cause of the B-10 range gap |
+| 2026-10-17 | Be-10 1.6 MeV ± 10 keV, energy spread at 50 / 110 / 200 / 300 mm | 10.62 / 10.47 / 8.43 / 5.26 keV | Monte Carlo, 20 000 ions: 10.57 / 10.44 / 8.43 / 5.25 keV | propagation formula checked |
+| 2026-10-17 | range straggling from electronic straggling vs SRIM longitudinal straggling | Be-10 1.6 MeV: 1.62 mm; B-10 1.4 MeV: 1.18 mm | SRIM: 14.51 / 9.99 mm | ratio ~0.11 at all energies: SRIM's projected-range straggling is dominated by nuclear scattering (path zig-zag, lateral 18 mm), not in the model yet |
 
 ## Next (in order)
 
-1. **Heavy-ion electronic stopping at low velocity.** At the same velocity (50 keV) SRIM has B stopping 1.72x as hard as Be; a smooth Lindhard-Scharff-type law gives 1.14x (Z1 oscillation, empirical). Options: (a) report the gap as a validated limitation; (b) effective-charge scaling of *proton* stopping in C and H (ICRU-49 / PSTAR data, Brandt-Kitagawa), the way SRIM is built; (c) optional per-ion correction tables. To decide.
-2. **Real beamline data**: window materials and thicknesses, entrance gap before anode 1, degrader question.
-3. **Straggling**: energy straggling in windows and gas (Bohr, charge-state), then widths of ΔE and E_res; SRIM's straggling columns are the benchmark.
-4. Monte Carlo ΔE-E clouds (needs 3 and the anodes), then accelerator stages.
+1. **Straggling, second part**: charge-exchange straggling (charge-state fluctuations of heavy ions in gas; Yang et al. 1991 empirical form), window thickness non-uniformity, detector resolution (ion-pair statistics, noise). Then the ΔE-E widths become realistic and the separation meaningful.
+2. **Monte Carlo** with nuclear scattering (angles, path length): needed for range / lateral straggling against SRIM, and for the ΔE-E clouds themselves.
+3. **Heavy-ion electronic stopping at low velocity** (B-10 gap vs SRIM): options (a) report as a limitation, (b) effective-charge scaling of proton stopping in C and H (ICRU-49 / PSTAR), (c) correction tables. To decide.
+4. **Real beamline data**: window materials and thicknesses, entrance gap, beam energy spread.
+5. Pressure finder that maximises the ΔE-E separation (once 1 is in), accelerator stages.
 
 ## Open questions
 

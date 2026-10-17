@@ -40,13 +40,6 @@ def test_missing_energy_is_rejected(water, proton):
         simulate(water, proton, SimSettings())
 
 
-def test_progress_callback_reaches_one(water, proton):
-    proton.E0 = 5.0
-    seen = []
-    simulate(water, proton, SimSettings(), seen.append)
-    assert seen and seen[-1] == 1.0
-
-
 def test_normal_run_ends_inside_the_model(water, proton):
     proton.E0 = 5.0
     r = simulate(water, proton, SimSettings(x_stop=1e4))

@@ -9,14 +9,15 @@ All lengths in mm from the detector entrance (x = 0 of the track).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Sequence
 
 import numpy as np
 
 from .materials import Material
 from .particles import Particle
-from .simulation import SimSettings, TrackResult, curve_crossings
+from .simulation import TrackResult, curve_crossings
+from .straggling import energy_covariance
 
 
 @dataclass
@@ -52,6 +53,19 @@ class AnodeSignals:
     dE: float           # anode 1
     E_res: float        # anode 2
     escaped: float      # still left at the end of anode 2 (the ion leaves the active volume)
+    # straggling (None when the track was computed without it): 1-sigma widths in MeV and
+    # the correlation of dE and E_res, from the energy covariance along the track
+    sigma_dE: Optional[float] = None
+    sigma_E_res: Optional[float] = None
+    corr: Optional[float] = None
+
+    @property
+    def covariance(self) -> Optional[np.ndarray]:
+        """2x2 covariance of (E_res, dE) in MeV^2 -- E_res first, as on a dE-E plot"""
+        if self.sigma_dE is None:
+            return None
+        c = self.corr * self.sigma_dE * self.sigma_E_res
+        return np.array([[self.sigma_E_res ** 2, c], [c, self.sigma_dE ** 2]])
 
 
 def anode_signals(track: TrackResult, layout: AnodeLayout) -> AnodeSignals:
@@ -64,7 +78,35 @@ def anode_signals(track: TrackResult, layout: AnodeLayout) -> AnodeSignals:
         return float(np.interp(d, x, E, right=E[-1]))
 
     e0, e1, e2, e3 = E[0], E_at(layout.start_mm), E_at(layout.boundary_mm), E_at(layout.end_mm)
-    return AnodeSignals(gap=e0 - e1, dE=e1 - e2, E_res=e2 - e3, escaped=e3)
+    signals = AnodeSignals(gap=e0 - e1, dE=e1 - e2, E_res=e2 - e3, escaped=e3)
+
+    if track.strag_J is not None and len(x) > 1:
+        C = energy_covariance(track, [layout.start_mm, layout.boundary_mm, layout.end_mm])
+        v_dE, v_res = np.array([1.0, -1.0, 0.0]), np.array([0.0, 1.0, -1.0])
+        var_dE, var_res = v_dE @ C @ v_dE, v_res @ C @ v_res
+        cov = v_dE @ C @ v_res
+        signals.sigma_dE = float(np.sqrt(max(var_dE, 0.0)))
+        signals.sigma_E_res = float(np.sqrt(max(var_res, 0.0)))
+        denom = signals.sigma_dE * signals.sigma_E_res
+        signals.corr = float(np.clip(cov / denom, -1.0, 1.0)) if denom > 0 else 0.0
+    return signals
+
+
+def separation(a: AnodeSignals, b: AnodeSignals) -> Optional[float]:
+    """
+    How far apart two particles' (E_res, dE) spots are, in units of their spread:
+    the Mahalanobis distance between the centres with the average covariance.
+    2 means the 1-sigma ellipses just touch; None without straggling.
+    """
+    Ca, Cb = a.covariance, b.covariance
+    if Ca is None or Cb is None:
+        return None
+    d = np.array([a.E_res - b.E_res, a.dE - b.dE])
+    C = 0.5 * (Ca + Cb)
+    try:
+        return float(np.sqrt(d @ np.linalg.solve(C, d)))
+    except np.linalg.LinAlgError:
+        return None
 
 
 def crossings_mass(a: TrackResult, b: TrackResult) -> list[float]:
@@ -94,7 +136,7 @@ def density_for_crossing(detector: Material,
         return None
     rho = detector.rho
     for _ in range(max_iter):
-        mat = _with_density(detector, rho)
+        mat = replace(detector, rho=rho)
         a, b = run(mat, particles[0]), run(mat, particles[1])
         xs = crossings_mass(a, b)
         if not xs:
@@ -106,8 +148,3 @@ def density_for_crossing(detector: Material,
             return new_rho
         rho = new_rho
     return rho
-
-
-def _with_density(mat: Material, rho: float) -> Material:
-    from dataclasses import replace
-    return replace(mat, rho=rho)

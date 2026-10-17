@@ -1,4 +1,4 @@
-"""The Qt window builds, simulates in its worker, and draws"""
+"""The Qt window builds, simulates and draws"""
 
 import pytest
 
@@ -7,7 +7,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from core.simulation import SimSettings
-from workers.sim_worker import SimJob, SimWorker
+from core.pipeline import SimJob, run_job
 
 
 @pytest.fixture(scope="module")
@@ -15,13 +15,10 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def test_worker_runs_a_job(qapp, water, proton):
+def test_run_job_gives_one_track_per_particle(water, proton):
     proton.E0 = 5.0
-    worker = SimWorker(SimJob(water, [proton], SimSettings()))
-    got = []
-    worker.finished.connect(got.append)
-    worker.run()                                   # synchronous: no thread needed in a test
-    assert len(got) == 1 and len(got[0]) == 1
+    got = run_job(SimJob(water, [proton, proton]))
+    assert len(got) == 2 and got[0].strag_J is not None
 
 
 def test_main_window_draws_results(qapp, water, proton):
@@ -29,9 +26,7 @@ def test_main_window_draws_results(qapp, water, proton):
     win = MainWindow()
     proton.E0 = 5.0
     job = SimJob(water, [proton], SimSettings())
-    worker = SimWorker(job)
-    worker.finished.connect(win.on_sim_done)
-    worker.run()
+    win.on_sim_done(run_job(job))
     assert win._results
     assert "Range (mm)" in win.results.text()
     win.close()
@@ -49,9 +44,7 @@ def test_results_warns_when_track_is_cut(qapp, water, proton):
     from ui.main_window import MainWindow
     win = MainWindow()
     proton.E0 = 100.0
-    worker = SimWorker(SimJob(water, [proton], SimSettings(x_stop=10.0)))
-    worker.finished.connect(win.on_sim_done)
-    worker.run()
+    win.on_sim_done(run_job(SimJob(water, [proton], SimSettings(x_stop=10.0))))
     assert "cut by the depth limit" in win.results.text()
     win.close()
 
@@ -62,14 +55,10 @@ def test_results_has_no_warning_for_a_track_that_runs_to_rest(qapp, water, proto
     win.detector_panel.box.setChecked(False)          # no anodes: nothing to say about E_res
 
     proton.E0 = 5.0
-    w = SimWorker(SimJob(water, [proton], SimSettings()))
-    w.finished.connect(win.on_sim_done)
-    w.run()
+    win.on_sim_done(run_job(SimJob(water, [proton], SimSettings())))
     assert "⚠" not in win.results.text()
 
-    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))     # used to warn: ~14 % unspent
-    w.finished.connect(win.on_sim_done)
-    w.run()
+    win.on_sim_done(run_job(SimJob(isobutane_low_p, [be10], SimSettings())))   # used to warn: ~14 % unspent
     assert "⚠" not in win.results.text()
     win.close()
 
@@ -80,9 +69,7 @@ def test_results_reports_the_model_limit_when_there_is_no_low_energy_law(
     from ui.main_window import MainWindow
     monkeypatch.setattr(physics, "_matching_point", lambda mat, part: (0.0, 0.0))
     win = MainWindow()
-    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))     # ~14 % unspent again
-    w.finished.connect(win.on_sim_done)
-    w.run()
+    win.on_sim_done(run_job(SimJob(isobutane_low_p, [be10], SimSettings())))   # ~14 % unspent again
     assert "⚠" in win.results.text() and "not valid" in win.results.text()
     win.close()
 
@@ -114,21 +101,17 @@ def test_main_window_runs_the_beam_through_windows(qapp, isobutane_low_p, be10):
     win.p1_panel.input_E0.setValue(1.6)
     win.windows_panel.add_window("Mylar (C10H8O4)", 1.0, "um")
     win.windows_panel.setChecked(True)
-    job = win._build_job(show_warnings=False)
+    job = win._build_job()
     assert len(job.windows) == 1
 
-    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings(), windows=job.windows))
-    w.finished.connect(win.on_sim_done)
-    w.run()
+    win.on_sim_done(run_job(SimJob(isobutane_low_p, [be10], SimSettings(), windows=job.windows)))
     text = win.results.text()
     assert "Beam: 1.6 MeV" in text and "1. Mylar (C10H8O4), 1 µm" in text and "⚠" not in text
     assert win._results[0].E[0] < 1.6
 
     thick = win.windows_panel.windows()
     thick[0].thickness = 10.0                             # 10 um of Mylar stops 1.6 MeV Be-10
-    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings(), windows=thick))
-    w.finished.connect(win.on_sim_done)
-    w.run()
+    win.on_sim_done(run_job(SimJob(isobutane_low_p, [be10], SimSettings(), windows=thick)))
     assert "Stops inside window 1" in win.results.text()
     win.close()
 
@@ -175,9 +158,7 @@ def test_window_material_names_have_room(qapp):
 def test_anode_columns_follow_the_detector_tab(qapp, isobutane_low_p, be10):
     from ui.main_window import MainWindow
     win = MainWindow()
-    w = SimWorker(SimJob(isobutane_low_p, [be10], SimSettings()))
-    w.finished.connect(win.on_sim_done)
-    w.run()
+    win.on_sim_done(run_job(SimJob(isobutane_low_p, [be10], SimSettings())))
     t = win.results.table
     assert not t.isColumnHidden(4) and t.item(0, 4).text() != "—"
     win.detector_panel.box.setChecked(False)
@@ -198,10 +179,8 @@ def test_pressure_finder_puts_the_crossing_on_the_boundary(qapp):
     rho = win.material_panel.density.value()
     assert rho != pytest.approx(1.08e-5, rel=1e-3)
 
-    job = win._build_job(False)
-    w = SimWorker(job)
-    w.finished.connect(win.on_sim_done)
-    w.run()
+    job = win._build_job()
+    win.on_sim_done(run_job(job))
     assert "on the anode boundary" in win.results.crossing_label.text()
     win.close()
 
@@ -235,3 +214,66 @@ def test_density_box_keeps_full_precision(qapp):
     assert box.valueFromText("1,08e-5 g/cm³") == pytest.approx(1.08e-5)
     box.stepBy(1)
     assert box.value() == pytest.approx(1.4524337e-05 * 1.01)
+
+
+# ---- straggling, dE-E view, no status messages ----
+
+def _be_b_window(qapp):
+    from ui.main_window import MainWindow
+    win = MainWindow()
+    win.material_panel.combo.setCurrentText("Isobutane (C4H10)")
+    win.material_panel.set_density(1.08e-5)
+    win.p1_panel.combo.setCurrentText("Beryllium-10")
+    win.p1_panel.input_E0.setValue(1.6)
+    win.p2_panel.combo.setCurrentText("Boron-10")
+    win.p2_panel.input_E0.setValue(1.6)
+    win.run()
+    return win
+
+
+def test_results_show_widths_and_separation(qapp):
+    win = _be_b_window(qapp)
+    t = win.results.table
+    assert "±" in t.item(0, 2).text() and "±" in t.item(0, 4).text() and "±" in t.item(0, 5).text()
+    assert "separation" in win.results.crossing_label.text()
+    win.beam_panel.straggling.setChecked(False)
+    win.run()
+    assert "±" not in t.item(0, 2).text() and "separation" not in win.results.crossing_label.text()
+    win.close()
+
+
+def test_de_e_view_draws_ellipses(qapp):
+    from core.units import PlotMode
+    win = _be_b_window(qapp)
+    win.plot_mode_combo.setCurrentIndex(win.plot_mode_combo.findData(PlotMode.DE_E))
+    import pyqtgraph as pg
+    curves = [i for i in win.plot.listDataItems()
+              if isinstance(i, pg.PlotDataItem) and i.xData is not None and len(i.xData) > 100]
+    assert len(curves) == 4                             # 1 and 2 sigma for both particles
+    assert not win.xaxis_combo.isEnabled() and not win.unit_combo.isEnabled()
+    win.detector_panel.box.setChecked(False)
+    assert "Switch on the anodes" in win.results.crossing_label.text()
+    win.close()
+
+
+def test_bad_input_is_reported_in_the_results_not_a_status_bar(qapp):
+    win = _be_b_window(qapp)
+    win.p1_panel.input_E0.setValue(0.0)
+    win.p2_panel.input_E0.setValue(0.0)
+    win.run()
+    assert "positive E₀" in win.results.crossing_label.text() and not win._results
+    from PySide6.QtWidgets import QStatusBar
+    assert win.findChild(QStatusBar) is None            # no status bar at all
+    win.close()
+
+
+def test_beam_settings_are_saved_with_the_session(qapp):
+    from ui.main_window import MainWindow
+    win = MainWindow()
+    win.beam_panel.sigma.setValue(12.5)
+    win.beam_panel.straggling.setChecked(False)
+    win.close()
+    fresh = MainWindow()
+    fresh._load_settings()
+    assert fresh.beam_panel.sigma.value() == 12.5 and not fresh.beam_panel.straggling.isChecked()
+    fresh.close()
